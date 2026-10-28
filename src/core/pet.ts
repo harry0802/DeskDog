@@ -120,8 +120,6 @@ const DEFAULT_AFFECTION = 50;
 const DEFAULT_SETTINGS: Settings = { name: "小柴" };
 const CLICK_AFFECTION = 2;
 const PAT_AFFECTION = 4;
-/** Pat 後 Mood 維持 happy 的時間（ms）。 */
-const AFTERGLOW = 60_000;
 const HAPPY_AFFECTION = 75;
 /** 低於此值時 normal 改用 coldNormal Line Pool。 */
 const COLD_AFFECTION = 30;
@@ -137,7 +135,6 @@ export function createPet(deps: PetDeps): Pet {
     | { position: Point; time: number; dragged: boolean; patted: boolean }
     | undefined;
   let settings = DEFAULT_SETTINGS;
-  let afterglowUntil = -Infinity;
   const decks = createLineDecks(deps.lines, deps.random);
 
   function current(): PetSnapshot {
@@ -155,18 +152,19 @@ export function createPet(deps: PetDeps): Pet {
   }
 
   /** 更新 Affection 並重新推導 Mood；沒有變化時保留原快照。 */
-  function update(now: number, affectionDelta = 0): PetSnapshot {
+  function update(affectionDelta = 0): PetSnapshot {
     const pet = current();
     const affection = clampAffection(pet.affection + affectionDelta);
-    const mood = deriveMood(affection, now < afterglowUntil);
+    // Afterglow：Pat 之後持續按住的期間，放開即結束。
+    const mood = deriveMood(affection, press?.patted ?? false);
     if (affection !== pet.affection || mood !== pet.mood) {
       snapshot = { ...pet, affection, mood };
     }
     return current();
   }
 
-  function click(now: number): PetOutput {
-    return output([say(linePool(update(now, CLICK_AFFECTION)))]);
+  function click(): PetOutput {
+    return output([say(linePool(update(CLICK_AFFECTION)))]);
   }
 
   /** 按住不動達 PAT_HOLD 時觸發一次 Pat；回傳這次按住是否已 Pat。 */
@@ -174,8 +172,7 @@ export function createPet(deps: PetDeps): Pet {
     if (!press || press.dragged) return false;
     if (!press.patted && now - press.time >= PAT_HOLD) {
       press.patted = true;
-      afterglowUntil = now + AFTERGLOW;
-      update(now, PAT_AFFECTION);
+      update(PAT_AFFECTION);
     }
     return press.patted;
   }
@@ -193,7 +190,6 @@ export function createPet(deps: PetDeps): Pet {
       ]);
     },
     tick({ now }) {
-      update(now);
       patIfHeld(now);
       return output();
     },
@@ -217,7 +213,8 @@ export function createPet(deps: PetDeps): Pet {
         const patted = patIfHeld(event.time);
         const { dragged } = press;
         press = undefined;
-        if (!dragged && !patted) return click(event.time);
+        if (!dragged && !patted) return click();
+        update();
       }
       return output();
     },

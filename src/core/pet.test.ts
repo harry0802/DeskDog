@@ -262,15 +262,21 @@ describe("Pat", () => {
 });
 
 describe("Afterglow", () => {
-  it("keeps the Mood happy for 60 s after a Pat, then follows Affection", () => {
+  it("keeps the Mood happy while still being patted, and ends on release", () => {
     const { pet } = startedPet();
     pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
     // 第 2000 ms 觸發 Pat（Affection 54，本身仍是 normal）。
     expect(tick(pet, 2000).snapshot.mood).toBe("happy");
-    pet.pointer({ type: "up", time: 2500, position: BODY, hitBody: true });
+    expect(tick(pet, 5000).snapshot.mood).toBe("happy");
 
-    expect(tick(pet, 2000 + 59_999).snapshot.mood).toBe("happy");
-    expect(tick(pet, 2000 + 60_000).snapshot.mood).toBe("normal");
+    const released = pet.pointer({
+      type: "up",
+      time: 5500,
+      position: BODY,
+      hitBody: true,
+    });
+
+    expect(released.snapshot.mood).toBe("normal");
   });
 });
 

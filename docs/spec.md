@@ -57,7 +57,7 @@ DeskDog 是一隻常駐 Windows 桌面的側面視角狗狗。牠站在螢幕工
 28. As a 使用者, I want 在狗狗身上按下並在 1 秒內放開（未移動超過拖拽門檻）算 Click, so that 輕點有明確回應。
 29. As a 使用者, I want Click 讓 Affection +2 並依目前 Mood 說一句 Line, so that 每次點牠都有回饋。
 30. As a 使用者, I want 在狗狗身上按住不動達 1 秒算 Pat, so that 我能好好摸摸牠。
-31. As a 使用者, I want Pat 讓 Affection +4 並進入 Afterglow（60 秒內 Mood 為 happy）, so that 摸頭比點一下更有感。
+31. As a 使用者, I want Pat 讓 Affection +4 並進入 Afterglow（持續摸著時 Mood 為 happy，放開即結束）, so that 摸頭比點一下更有感。
 32. As a 使用者, I want 按住後移動超過拖拽門檻（約 6px）就 Pickup, so that 我想搬牠時不會被誤判成摸頭或點擊。
 33. As a 使用者, I want Pickup 時游標變成抓取狀態, so that 我知道我正抓著牠。
 34. As a 使用者, I want 1.5 秒內連續 Click 5 次時 Affection -1 並進入 annoyed（10 秒冷卻）, so that 狗狗有被打擾的真實反應。
@@ -157,7 +157,7 @@ DeskDog 是一隻常駐 Windows 桌面的側面視角狗狗。牠站在螢幕工
 2. **Rig（覆蓋層）**：把核心快照映射成 Part 的變換；Container 旋轉、`MeshRope` 尾巴與四腿、`MeshPlane` 身體呼吸與壓扁回彈、眼睛／嘴巴 Part 切換。依 Part alpha 做逐像素命中（alpha > 10%），游標遠離時直接判定未命中。
 3. **Part 載入器**：讀取同畫布、未裁切的 Part PNG 與 Pivot 描述；素材缺席時改用程式繪製的佔位 Part。另附一個把 PSD 拆層並產生 Pivot 描述的腳本。
 4. **主行程**：建立覆蓋層、系統列選單、設定視窗；提供系統 AFK（powerMonitor）、全螢幕偵測、打字偵測、螢幕工作區域；處理開機自啟；讀寫存檔。
-5. **存檔**：兩個 JSON 檔於 `%APPDATA%/DeskDog`：`pet-state`（Affection、位置與所在螢幕、Neglect 相關累計時間、Afterglow／冷卻截止時間）與 `settings`（名字、開機自啟、Chatter 頻率、打字時不打擾、深夜睡覺、拖拽物理）。先寫暫存檔再改名。「重置好感度」只清 `pet-state`。
+5. **存檔**：兩個 JSON 檔於 `%APPDATA%/DeskDog`：`pet-state`（Affection、位置與所在螢幕、Neglect 相關累計時間、冷卻截止時間）與 `settings`（名字、開機自啟、Chatter 頻率、打字時不打擾、深夜睡覺、拖拽物理）。先寫暫存檔再改名。「重置好感度」只清 `pet-state`。
 6. **台詞庫**：一份 JSON，鍵為 Line Pool 名稱：happy、normal、coldNormal、lonely、annoyed、sulky、sulkyCoaxing、makeUp、sleepy、woken、greeting、pickedUp、protestPickup、dragging、fastDragging、falling、landing、draggedTooLong。
 
 ### 狀態模型
@@ -165,9 +165,15 @@ DeskDog 是一隻常駐 Windows 桌面的側面視角狗狗。牠站在螢幕工
 Mood 與 Motion 嚴格分開；Mood 為推導值，不是事件寫死的值。
 
 ```ts
-type Mood = 'happy' | 'normal' | 'lonely' | 'annoyed' | 'sulky' | 'sleepy';
-type Motion = 'idle' | 'strolling' | 'pickedUp' | 'dragging'
-            | 'falling' | 'landing' | 'sleeping';
+type Mood = "happy" | "normal" | "lonely" | "annoyed" | "sulky" | "sleepy";
+type Motion =
+  | "idle"
+  | "strolling"
+  | "pickedUp"
+  | "dragging"
+  | "falling"
+  | "landing"
+  | "sleeping";
 ```
 
 ### Mood 推導順序
@@ -181,24 +187,24 @@ type Motion = 'idle' | 'strolling' | 'pickedUp' | 'dragging'
 
 ### 手勢與數值
 
-| 項目 | 值 |
-|---|---|
-| 拖拽門檻 | 約 6px 移動 |
-| Pat | 按住不動 1 秒 |
-| 連點判定 | 1.5 秒內 5 次 Click → Affection -1、annoyed 10 秒 |
-| Click / Pat / 安全 Drop | +2 / +4 / +1 |
-| Afterglow | 60 秒 |
-| Affection Decay | 每 1 小時 Neglect -1 |
-| Make-up | 30 秒內 3 次 Interaction 或 1 次 Pat |
-| Woken | 清醒 2 分鐘 |
-| 拖太久 | 8 秒說 Line；15 秒進 annoyed |
-| 重力 | 1400～1800 px/s² |
-| 傾斜上限 | 12～15 度 |
-| 回彈係數 | 0.2～0.3（活潑模式提高） |
-| 落地壓扁 | Y 0.75、X 1.2，回復 200～350 ms |
-| Toss 速度上限 | 約 2500 px/s（活潑模式提高） |
-| Stroll | 每 1～3 分鐘 30% 機率，50～200px |
-| fps | 互動 60／待機 30／sleepy 或 AFK > 5 分 10／隱藏 0 |
+| 項目                    | 值                                                |
+| ----------------------- | ------------------------------------------------- |
+| 拖拽門檻                | 約 6px 移動                                       |
+| Pat                     | 按住不動 1 秒                                     |
+| 連點判定                | 1.5 秒內 5 次 Click → Affection -1、annoyed 10 秒 |
+| Click / Pat / 安全 Drop | +2 / +4 / +1                                      |
+| Afterglow               | 持續到放開滑鼠                                    |
+| Affection Decay         | 每 1 小時 Neglect -1                              |
+| Make-up                 | 30 秒內 3 次 Interaction 或 1 次 Pat              |
+| Woken                   | 清醒 2 分鐘                                       |
+| 拖太久                  | 8 秒說 Line；15 秒進 annoyed                      |
+| 重力                    | 1400～1800 px/s²                                  |
+| 傾斜上限                | 12～15 度                                         |
+| 回彈係數                | 0.2～0.3（活潑模式提高）                          |
+| 落地壓扁                | Y 0.75、X 1.2，回復 200～350 ms                   |
+| Toss 速度上限           | 約 2500 px/s（活潑模式提高）                      |
+| Stroll                  | 每 1～3 分鐘 30% 機率，50～200px                  |
+| fps                     | 互動 60／待機 30／sleepy 或 AFK > 5 分 10／隱藏 0 |
 
 ### 美術（ADR-0002）
 

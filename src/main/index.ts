@@ -9,7 +9,7 @@ import {
 import { IPC, type OverlayInit } from "../preload/api";
 import lines from "./lines.json";
 
-/** 核心 tick 間隔（ms）；Pat 判定與 Afterglow 到期依賴它。 */
+/** 核心 tick 間隔（ms）；Pat 判定依賴它。 */
 const TICK_INTERVAL = 100;
 
 // 每個螢幕一個全螢幕透明覆蓋層（ADR-0001）。key 為 webContents id。

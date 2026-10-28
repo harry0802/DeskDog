@@ -17,7 +17,7 @@ _Avoid_: 動作狀態、action、state
 _Avoid_: 親密度、好感值、love
 
 **Afterglow（摸後餘韻）**：
-被摸頭後的一段時間，期間 Mood 為 happy，不論 Affection 高低。
+Pat 成立後到放開滑鼠為止的期間；期間 Mood 為 happy，不論 Affection 高低，放開即結束。
 
 **Affection Decay（好感衰減）**：
 被冷落時 Affection 隨時間緩慢下降；App 未執行的時間不計。
