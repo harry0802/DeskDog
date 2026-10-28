@@ -79,6 +79,15 @@ const DEFS: readonly PartDef[] = [
     draw: (g) => g.circle(190, 62, 4).fill(INK),
   },
   {
+    name: "eyes_happy",
+    pivot: { x: 190, y: 62 },
+    draw: (g) =>
+      g
+        .moveTo(185, 64)
+        .quadraticCurveTo(190, 56, 195, 64)
+        .stroke({ width: 2.5, color: INK, cap: "round" }),
+  },
+  {
     name: "mouth_idle",
     pivot: { x: 206, y: 91 },
     draw: (g) =>
@@ -86,6 +95,18 @@ const DEFS: readonly PartDef[] = [
         .moveTo(198, 90)
         .quadraticCurveTo(205, 95, 212, 89)
         .stroke({ width: 2, color: INK, cap: "round" }),
+  },
+  {
+    name: "mouth_happy",
+    pivot: { x: 206, y: 91 },
+    draw: (g) =>
+      g
+        .moveTo(196, 88)
+        .quadraticCurveTo(205, 104, 214, 87)
+        .closePath()
+        .fill(INK)
+        .ellipse(205, 96, 4, 3)
+        .fill(0xe46a7a),
   },
 ];
 

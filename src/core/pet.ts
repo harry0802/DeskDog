@@ -27,9 +27,13 @@ export interface Display {
 export interface StartInput {
   readonly now: number;
   readonly displays: readonly Display[];
-  /** 上次存檔；格式尚未定義，目前忽略。 */
-  readonly saved?: unknown;
+  /** 上次存檔；之後的 issue 會補齊欄位與正規化。 */
+  readonly saved?: Partial<SavedPetState>;
   readonly settings?: Partial<Settings>;
+}
+
+export interface SavedPetState {
+  readonly affection: number;
 }
 
 export interface Settings {
@@ -115,17 +119,25 @@ const HOME_RIGHT_INSET = 120;
 const DEFAULT_AFFECTION = 50;
 const DEFAULT_SETTINGS: Settings = { name: "小柴" };
 const CLICK_AFFECTION = 2;
+const PAT_AFFECTION = 4;
+/** Pat 後 Mood 維持 happy 的時間（ms）。 */
+const AFTERGLOW = 60_000;
 const HAPPY_AFFECTION = 75;
+/** 低於此值時 normal 改用 coldNormal Line Pool。 */
+const COLD_AFFECTION = 30;
 /** 按下後移動超過此距離就不再是 Click。 */
 const DRAG_THRESHOLD = 6;
-/** 按住達此時間就不再是 Click（ms）。 */
-const CLICK_MAX_DURATION = 1000;
+/** 按住不動達此時間即為 Pat，放開也不再是 Click（ms）。 */
+const PAT_HOLD = 1000;
 
 export function createPet(deps: PetDeps): Pet {
   let snapshot: PetSnapshot | undefined;
   /** 在身上按下的位置與時間；未按在身上時為 undefined。 */
-  let press: { position: Point; time: number; dragged: boolean } | undefined;
+  let press:
+    | { position: Point; time: number; dragged: boolean; patted: boolean }
+    | undefined;
   let settings = DEFAULT_SETTINGS;
+  let afterglowUntil = -Infinity;
   const decks = createLineDecks(deps.lines, deps.random);
 
   function current(): PetSnapshot {
@@ -142,28 +154,58 @@ export function createPet(deps: PetDeps): Pet {
     return { type: "say", line };
   }
 
-  function click(): PetOutput {
-    const affection = Math.min(100, current().affection + CLICK_AFFECTION);
-    snapshot = { ...current(), affection, mood: deriveMood(affection) };
-    return output([say(snapshot.mood)]);
+  /** 更新 Affection 並重新推導 Mood；沒有變化時保留原快照。 */
+  function update(now: number, affectionDelta = 0): PetSnapshot {
+    const pet = current();
+    const affection = clampAffection(pet.affection + affectionDelta);
+    const mood = deriveMood(affection, now < afterglowUntil);
+    if (affection !== pet.affection || mood !== pet.mood) {
+      snapshot = { ...pet, affection, mood };
+    }
+    return current();
+  }
+
+  function click(now: number): PetOutput {
+    return output([say(linePool(update(now, CLICK_AFFECTION)))]);
+  }
+
+  /** 按住不動達 PAT_HOLD 時觸發一次 Pat；回傳這次按住是否已 Pat。 */
+  function patIfHeld(now: number): boolean {
+    if (!press || press.dragged) return false;
+    if (!press.patted && now - press.time >= PAT_HOLD) {
+      press.patted = true;
+      afterglowUntil = now + AFTERGLOW;
+      update(now, PAT_AFFECTION);
+    }
+    return press.patted;
   }
 
   return {
     start(input) {
       settings = { ...DEFAULT_SETTINGS, ...input.settings };
-      snapshot = homeSnapshot(primaryDisplay(input.displays));
+      snapshot = homeSnapshot(
+        primaryDisplay(input.displays),
+        clampAffection(input.saved?.affection ?? DEFAULT_AFFECTION)
+      );
       return output([
         { type: "playAnimation", animation: "greeting" },
         say("greeting"),
       ]);
     },
-    tick() {
+    tick({ now }) {
+      update(now);
+      patIfHeld(now);
       return output();
     },
     pointer(event) {
       if (event.type === "down") {
         press = event.hitBody
-          ? { position: event.position, time: event.time, dragged: false }
+          ? {
+              position: event.position,
+              time: event.time,
+              dragged: false,
+              patted: false,
+            }
           : undefined;
         return output();
       }
@@ -172,18 +214,27 @@ export function createPet(deps: PetDeps): Pet {
         press.dragged = true;
       }
       if (event.type === "up") {
-        const { dragged, time } = press;
+        const patted = patIfHeld(event.time);
+        const { dragged } = press;
         press = undefined;
-        if (!dragged && event.time - time < CLICK_MAX_DURATION) return click();
+        if (!dragged && !patted) return click(event.time);
       }
       return output();
     },
   };
 }
 
-// 之後的 issue 會加入 annoyed、sleepy、sulky、lonely 與 Afterglow。
-function deriveMood(affection: number): Mood {
-  return affection >= HAPPY_AFFECTION ? "happy" : "normal";
+// 之後的 issue 會加入 annoyed、sleepy、sulky、lonely。
+function deriveMood(affection: number, afterglow: boolean): Mood {
+  return afterglow || affection >= HAPPY_AFFECTION ? "happy" : "normal";
+}
+
+function clampAffection(affection: number): number {
+  return Math.min(100, Math.max(0, affection));
+}
+
+function linePool({ mood, affection }: PetSnapshot): LinePool {
+  return mood === "normal" && affection < COLD_AFFECTION ? "coldNormal" : mood;
 }
 
 function distance(a: Point, b: Point): number {
@@ -196,11 +247,11 @@ function primaryDisplay(displays: readonly Display[]): Display {
   return display;
 }
 
-function homeSnapshot(display: Display): PetSnapshot {
+function homeSnapshot(display: Display, affection: number): PetSnapshot {
   const { workArea } = display;
   return {
-    mood: deriveMood(DEFAULT_AFFECTION),
-    affection: DEFAULT_AFFECTION,
+    mood: deriveMood(affection, false),
+    affection,
     displayId: display.id,
     position: {
       x: workArea.x + workArea.width - HOME_RIGHT_INSET,

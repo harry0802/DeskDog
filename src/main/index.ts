@@ -1,8 +1,16 @@
 import { app, BrowserWindow, ipcMain, screen } from "electron";
 import { join } from "node:path";
-import { createPet, type Display, type PointerEvent } from "../core/pet";
+import {
+  createPet,
+  type Display,
+  type PetOutput,
+  type PointerEvent,
+} from "../core/pet";
 import { IPC, type OverlayInit } from "../preload/api";
 import lines from "./lines.json";
+
+/** 核心 tick 間隔（ms）；Pat 判定與 Afterglow 到期依賴它。 */
+const TICK_INTERVAL = 100;
 
 // 每個螢幕一個全螢幕透明覆蓋層（ADR-0001）。key 為 webContents id。
 const overlays = new Map<number, Electron.Display>();
@@ -66,13 +74,22 @@ app.whenReady().then(() => {
     };
   });
 
-  ipcMain.on(IPC.pointer, (_event, pointer: PointerEvent) => {
-    const output = pet.pointer(pointer);
+  /** 快照有變化或有效果時才通知覆蓋層。 */
+  function publish(output: PetOutput): void {
+    if (output.snapshot === snapshot && output.effects.length === 0) return;
     snapshot = output.snapshot;
     for (const win of BrowserWindow.getAllWindows()) {
       win.webContents.send(IPC.output, output);
     }
+  }
+
+  ipcMain.on(IPC.pointer, (_event, pointer: PointerEvent) => {
+    publish(pet.pointer(pointer));
   });
+
+  setInterval(() => {
+    publish(pet.tick({ now: Date.now(), displays: petDisplays() }));
+  }, TICK_INTERVAL);
 
   ipcMain.on(IPC.setHit, (event, hit: boolean) => {
     BrowserWindow.fromWebContents(event.sender)?.setIgnoreMouseEvents(!hit, {

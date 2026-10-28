@@ -215,3 +215,109 @@ describe("Line Pool", () => {
     expect(said(click(pet))).toEqual(["我是小柴"]);
   });
 });
+
+const tick = (pet: ReturnType<typeof createPet>, now: number) =>
+  pet.tick({ now, displays: [primary] });
+
+describe("Pat", () => {
+  it("is not a Pat after 0.9 s of holding, but is at 1.0 s and adds 4 Affection", () => {
+    const { pet, started } = startedPet();
+    const before = started.snapshot.affection;
+
+    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
+
+    expect(tick(pet, 1900).snapshot.affection).toBe(before);
+    expect(tick(pet, 2000).snapshot.affection).toBe(before + 4);
+  });
+
+  it("counts a 1 s hold released before any tick as a Pat, not a Click", () => {
+    const { pet, started } = startedPet();
+
+    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
+    const out = pet.pointer({
+      type: "up",
+      time: 2200,
+      position: BODY,
+      hitBody: true,
+    });
+
+    expect(out.snapshot.affection).toBe(started.snapshot.affection + 4);
+  });
+
+  it("only Pats once per hold", () => {
+    const { pet, started } = startedPet();
+
+    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
+    tick(pet, 2000);
+    tick(pet, 3000);
+    const out = pet.pointer({
+      type: "up",
+      time: 3500,
+      position: BODY,
+      hitBody: true,
+    });
+
+    expect(out.snapshot.affection).toBe(started.snapshot.affection + 4);
+  });
+});
+
+describe("Afterglow", () => {
+  it("keeps the Mood happy for 60 s after a Pat, then follows Affection", () => {
+    const { pet } = startedPet();
+    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
+    // 第 2000 ms 觸發 Pat（Affection 54，本身仍是 normal）。
+    expect(tick(pet, 2000).snapshot.mood).toBe("happy");
+    pet.pointer({ type: "up", time: 2500, position: BODY, hitBody: true });
+
+    expect(tick(pet, 2000 + 59_999).snapshot.mood).toBe("happy");
+    expect(tick(pet, 2000 + 60_000).snapshot.mood).toBe("normal");
+  });
+});
+
+describe("Mood from Affection", () => {
+  it.each([
+    { affection: 75, mood: "happy", pool: "happy" },
+    { affection: 72, mood: "normal", pool: "normal" },
+    { affection: 30, mood: "normal", pool: "normal" },
+    { affection: 26, mood: "normal", pool: "coldNormal" },
+  ])(
+    "Affection $affection after a Click → $mood, Line from $pool",
+    ({ affection, mood, pool }) => {
+      const { pet } = startedPet(
+        {
+          lines: lines({ happy: ["h"], normal: ["n"], coldNormal: ["c"] }),
+        },
+        { saved: { affection: affection - 2 } }
+      );
+
+      const out = click(pet);
+
+      expect(out.snapshot.affection).toBe(affection);
+      expect(out.snapshot.mood).toBe(mood);
+      expect(said(out)).toEqual([
+        { happy: "h", normal: "n", coldNormal: "c" }[pool],
+      ]);
+    }
+  );
+});
+
+describe("Affection range", () => {
+  it.each([
+    { saved: 150, expected: 100 },
+    { saved: -10, expected: 0 },
+  ])(
+    "clamps a saved Affection of $saved to $expected",
+    ({ saved, expected }) => {
+      const { started } = startedPet({}, { saved: { affection: saved } });
+
+      expect(started.snapshot.affection).toBe(expected);
+    }
+  );
+
+  it("never rises above 100", () => {
+    const { pet } = startedPet({}, { saved: { affection: 99 } });
+
+    expect(click(pet).snapshot.affection).toBe(100);
+    expect(click(pet).snapshot.affection).toBe(100);
+  });
+});

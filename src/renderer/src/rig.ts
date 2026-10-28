@@ -1,6 +1,6 @@
 // Rig：把核心快照映射成 Part 的變換（ADR-0002），並做逐像素命中。
 import { Container, Sprite } from "pixi.js";
-import type { DisplayId, PetSnapshot, Point, Rect } from "../../core/pet";
+import type { DisplayId, Mood, PetSnapshot, Point, Rect } from "../../core/pet";
 import { CANVAS, FEET, HEAD_TOP, type Part } from "./parts";
 
 /** Part alpha 超過 10% 才算命中。 */
@@ -9,6 +9,20 @@ const HIT_ALPHA = 255 * 0.1;
 const GREETING_DURATION = 700;
 const GREETING_HOPS = 2;
 const GREETING_HEIGHT = 18;
+/** happy：每隔一段時間跳一下，尾巴快速擺動。 */
+const HAPPY_HOP_PERIOD = 1600;
+const HAPPY_HOP_DURATION = 320;
+const HAPPY_HOP_HEIGHT = 14;
+const HAPPY_WAG_PERIOD = 240;
+const HAPPY_WAG_ANGLE = 0.35;
+
+/** 各 Mood 顯示的表情 Part；未列出的眼睛、嘴巴 Part 隱藏。 */
+const EXPRESSIONS: Partial<Record<Mood, readonly string[]>> = {
+  happy: ["eyes_happy", "mouth_happy"],
+};
+const DEFAULT_EXPRESSION = ["eyes_open", "mouth_idle"];
+const isExpression = (name: string) =>
+  name.startsWith("eyes_") || name.startsWith("mouth_");
 
 interface RiggedPart {
   readonly part: Part;
@@ -18,7 +32,10 @@ interface RiggedPart {
 export class Rig {
   readonly view = new Container();
   private readonly parts: RiggedPart[];
+  private readonly tail: Sprite | undefined;
   private base: Point = { x: 0, y: 0 };
+  private mood: Mood = "normal";
+  private elapsed = 0;
   private greetingElapsed = GREETING_DURATION;
 
   constructor(
@@ -34,6 +51,8 @@ export class Rig {
       this.view.addChild(sprite);
       return { part, sprite };
     });
+    this.tail = this.parts.find(({ part }) => part.name === "tail")?.sprite;
+    this.showExpression();
   }
 
   apply(snapshot: PetSnapshot): void {
@@ -45,6 +64,10 @@ export class Rig {
     this.view.position.set(this.base.x, this.base.y);
     // 佔位 Part 面向右；面向左時水平翻轉。
     this.view.scale.x = snapshot.facing === "left" ? -1 : 1;
+    if (snapshot.mood !== this.mood) {
+      this.mood = snapshot.mood;
+      this.showExpression();
+    }
   }
 
   playGreeting(): void {
@@ -52,14 +75,33 @@ export class Rig {
   }
 
   update(deltaMs: number): void {
-    if (this.greetingElapsed >= GREETING_DURATION) return;
+    this.elapsed += deltaMs;
     this.greetingElapsed = Math.min(
       GREETING_DURATION,
       this.greetingElapsed + deltaMs
     );
-    const phase = (this.greetingElapsed / GREETING_DURATION) * GREETING_HOPS;
-    const hop = Math.abs(Math.sin(phase * Math.PI)) * GREETING_HEIGHT;
-    this.view.position.set(this.base.x, this.base.y - hop);
+    const happy = this.mood === "happy";
+
+    const greetingPhase =
+      (this.greetingElapsed / GREETING_DURATION) * GREETING_HOPS;
+    const greetingHop =
+      Math.abs(Math.sin(greetingPhase * Math.PI)) * GREETING_HEIGHT;
+    const hopTime = this.elapsed % HAPPY_HOP_PERIOD;
+    const happyHop =
+      happy && hopTime < HAPPY_HOP_DURATION
+        ? Math.sin((hopTime / HAPPY_HOP_DURATION) * Math.PI) * HAPPY_HOP_HEIGHT
+        : 0;
+    this.view.position.set(
+      this.base.x,
+      this.base.y - Math.max(greetingHop, happyHop)
+    );
+
+    if (this.tail) {
+      this.tail.rotation = happy
+        ? Math.sin((this.elapsed / HAPPY_WAG_PERIOD) * Math.PI * 2) *
+          HAPPY_WAG_ANGLE
+        : 0;
+    }
   }
 
   /** 頭頂位置（不含跳躍），覆蓋層視窗座標；Bubble 的錨點。 */
@@ -77,6 +119,7 @@ export class Rig {
     // 游標遠離時直接判定未命中。
     if (!this.view.getBounds().containsPoint(point.x, point.y)) return false;
     return this.parts.some(({ part, sprite }) => {
+      if (!sprite.visible) return false;
       const local = sprite.toLocal(point);
       if (
         local.x < 0 ||
@@ -91,5 +134,12 @@ export class Rig {
       const py = Math.floor((local.y / CANVAS.height) * height);
       return (data[(py * width + px) * 4 + 3] ?? 0) > HIT_ALPHA;
     });
+  }
+
+  private showExpression(): void {
+    const shown = EXPRESSIONS[this.mood] ?? DEFAULT_EXPRESSION;
+    for (const { part, sprite } of this.parts) {
+      if (isExpression(part.name)) sprite.visible = shown.includes(part.name);
+    }
   }
 }
