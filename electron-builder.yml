@@ -1,0 +1,14 @@
+# Windows 安裝檔：pnpm run dist → dist/DeskDog Setup <version>.exe
+appId: com.harry0802.deskdog
+# 開始選單與解除安裝清單上顯示的名字。
+productName: DeskDog
+directories:
+  output: dist
+# electron-vite 已把 main、preload、renderer 連同相依套件打包進 out/。
+files:
+  - out/**
+win:
+  target: nsis
+nsis:
+  # 解除安裝時保留 %APPDATA%/DeskDog 的存檔（明寫出來，免得以後被改成刪除）。
+  deleteAppDataOnUninstall: false

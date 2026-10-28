@@ -11,12 +11,14 @@
     "type-check": "tsc && tsc -p tsconfig.node.json && tsc -p tsconfig.web.json",
     "test": "vitest run --passWithNoTests",
     "prepare": "husky",
-    "sandcastle": "tsx .sandcastle/main.ts"
+    "sandcastle": "tsx .sandcastle/main.ts",
+    "dist": "electron-vite build && electron-builder --win"
   },
   "devDependencies": {
     "@ai-hero/sandcastle": "^0.12.0",
     "@types/node": "^26.6.5",
     "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
     "electron-vite": "^6.0.0",
     "husky": "^9.1.7",
     "lint-staged": "^17.6.0",

@@ -1205,6 +1205,7 @@ describe("Saved state", () => {
           nightSleep: true,
           chatter: "normal",
           quietWhileTyping: true,
+          launchAtLogin: false,
         },
       },
     ]);
@@ -1851,5 +1852,40 @@ describe("Tray controls", () => {
       petState: { affection: 50, neglect: 0, sulking: false },
       settings: { name: "阿福" },
     });
+  });
+});
+
+describe("Launch at login", () => {
+  const launchAtLogin = (output: PetOutput) =>
+    output.effects.filter((e) => e.type === "launchAtLogin");
+
+  it("turns launch at login off on start when nothing is saved", () => {
+    const { started } = startedPet();
+
+    expect(launchAtLogin(started)).toEqual([
+      { type: "launchAtLogin", enabled: false },
+    ]);
+  });
+
+  it("turns launch at login on on start when the saved setting is on", () => {
+    const { started } = startedPet({}, { settings: { launchAtLogin: true } });
+
+    expect(launchAtLogin(started)).toEqual([
+      { type: "launchAtLogin", enabled: true },
+    ]);
+  });
+
+  it("asks the system to change launch at login when the setting changes", () => {
+    const { pet } = startedPet();
+
+    expect(launchAtLogin(pet.configure({ launchAtLogin: true }))).toEqual([
+      { type: "launchAtLogin", enabled: true },
+    ]);
+  });
+
+  it("leaves launch at login alone when another setting changes", () => {
+    const { pet } = startedPet();
+
+    expect(launchAtLogin(pet.configure({ name: "阿福" }))).toEqual([]);
   });
 });

@@ -58,6 +58,8 @@ export interface Settings {
   readonly chatter: ChatterFrequency;
   /** 使用者正在打字時不 Chatter。 */
   readonly quietWhileTyping: boolean;
+  /** 開機自動啟動。 */
+  readonly launchAtLogin: boolean;
 }
 
 const CHATTER_FREQUENCIES = ["off", "low", "normal", "high"] as const;
@@ -154,6 +156,8 @@ export type PetEffect =
       readonly type: "playAnimation";
       readonly animation: "greeting" | "hmph" | "rubEyes" | "dreamWag";
     }
+  /** 要求主行程向系統登記（或取消）開機自動啟動。 */
+  | { readonly type: "launchAtLogin"; readonly enabled: boolean }
   /** 要求主行程把 pet-state 與 settings 寫入存檔。 */
   | {
       readonly type: "save";
@@ -198,6 +202,7 @@ const DEFAULT_SETTINGS: Settings = {
   nightSleep: true,
   chatter: "normal",
   quietWhileTyping: true,
+  launchAtLogin: false,
 };
 /** 各頻率兩次 Chatter 之間的間隔範圍（ms）。 */
 const CHATTER_INTERVAL: Record<
@@ -844,6 +849,7 @@ export function createPet(deps: PetDeps): Pet {
       return output([
         { type: "playAnimation", animation: "greeting" },
         say("greeting"),
+        { type: "launchAtLogin", enabled: settings.launchAtLogin },
       ]);
     },
     tick(input) {
@@ -884,11 +890,14 @@ export function createPet(deps: PetDeps): Pet {
       return output();
     },
     configure(change) {
-      const before = settings.chatter;
+      const before = settings;
       settings = { ...settings, ...change };
-      if (settings.chatter !== before) scheduleChatter(lastTick);
+      if (settings.chatter !== before.chatter) scheduleChatter(lastTick);
       saveRequested = true;
-      return output();
+      if (settings.launchAtLogin === before.launchAtLogin) return output();
+      return output([
+        { type: "launchAtLogin", enabled: settings.launchAtLogin },
+      ]);
     },
     pointer(event) {
       if (event.type === "down") {
@@ -943,8 +952,14 @@ function numberOr(value: unknown, fallback: number): number {
 }
 
 function readSettings(saved: unknown): Settings {
-  const { name, dragPhysics, nightSleep, chatter, quietWhileTyping } =
-    fields(saved);
+  const {
+    name,
+    dragPhysics,
+    nightSleep,
+    chatter,
+    quietWhileTyping,
+    launchAtLogin,
+  } = fields(saved);
   return {
     name:
       typeof name === "string" && name !== "" ? name : DEFAULT_SETTINGS.name,
@@ -962,6 +977,10 @@ function readSettings(saved: unknown): Settings {
       typeof quietWhileTyping === "boolean"
         ? quietWhileTyping
         : DEFAULT_SETTINGS.quietWhileTyping,
+    launchAtLogin:
+      typeof launchAtLogin === "boolean"
+        ? launchAtLogin
+        : DEFAULT_SETTINGS.launchAtLogin,
   };
 }
 

@@ -85,6 +85,23 @@ function persist({ effects }: PetOutput): void {
   }
 }
 
+/**
+ * 向 Windows 登記開機自動啟動。只在安裝版生效：開發時登記到的會是
+ * node_modules 裡的 electron.exe。
+ */
+function applyLaunchAtLogin({ effects }: PetOutput): void {
+  if (!app.isPackaged) return;
+  for (const effect of effects) {
+    if (effect.type !== "launchAtLogin") continue;
+    app.setLoginItemSettings({ openAtLogin: effect.enabled });
+  }
+}
+
+/** 覆蓋層只需要畫面效果；存檔與系統設定由主行程處理。 */
+function overlayEffects({ effects }: PetOutput): PetOutput["effects"] {
+  return effects.filter((e) => e.type !== "save" && e.type !== "launchAtLogin");
+}
+
 app.whenReady().then(() => {
   const pet = createPet({ random: Math.random, lines });
   const started = pet.start({
@@ -93,6 +110,7 @@ app.whenReady().then(() => {
     saved: readJson(saveFile("pet-state")),
     settings: readJson(saveFile("settings")),
   });
+  applyLaunchAtLogin(started);
   let snapshot = started.snapshot;
 
   ipcMain.handle(IPC.init, (event): OverlayInit => {
@@ -101,14 +119,15 @@ app.whenReady().then(() => {
     return {
       displayId: display.id,
       bounds: display.bounds,
-      output: { snapshot, effects: started.effects },
+      output: { snapshot, effects: overlayEffects(started) },
     };
   });
 
   /** 先處理存檔；快照有變化或有其他效果時才通知覆蓋層。 */
   function publish(output: PetOutput): void {
     persist(output);
-    const effects = output.effects.filter((e) => e.type !== "save");
+    applyLaunchAtLogin(output);
+    const effects = overlayEffects(output);
     if (output.snapshot === snapshot && effects.length === 0) return;
     snapshot = output.snapshot;
     for (const win of BrowserWindow.getAllWindows()) {
