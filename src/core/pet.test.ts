@@ -1199,7 +1199,13 @@ describe("Saved state", () => {
           neglectSinceDecay: 0,
           sulking: false,
         },
-        settings: { name: "小柴", dragPhysics: "standard", nightSleep: true },
+        settings: {
+          name: "小柴",
+          dragPhysics: "standard",
+          nightSleep: true,
+          chatter: "normal",
+          quietWhileTyping: true,
+        },
       },
     ]);
   });
@@ -1412,5 +1418,157 @@ describe("Sleepy", () => {
       });
       expect(said(out)).toEqual([]);
     });
+  });
+});
+
+describe("Chatter", () => {
+  const MIN = 60_000;
+  /** 每 step ms tick 一次直到 until，回傳每次 Chatter 的時間。 */
+  function chatterTimes(
+    pet: ReturnType<typeof createPet>,
+    until: number,
+    at: Partial<Parameters<typeof pet.tick>[0]> = {},
+    from = 0
+  ): number[] {
+    const times: number[] = [];
+    for (let now = from + 1000; now <= until; now += 1000) {
+      if (said(pet.tick({ now, displays: [primary], ...at })).length > 0) {
+        times.push(now);
+      }
+    }
+    return times;
+  }
+
+  it.each([
+    { frequency: "low", random: 0, from: 20, to: 20 },
+    { frequency: "low", random: 0.999, from: 30, to: 30 },
+    { frequency: "normal", random: 0, from: 8, to: 8 },
+    { frequency: "normal", random: 0.999, from: 15, to: 15 },
+    { frequency: "high", random: 0, from: 4, to: 4 },
+    { frequency: "high", random: 0.999, from: 6, to: 6 },
+  ] as const)(
+    "$frequency with random $random chatters after $from minutes",
+    ({ frequency, random, from, to }) => {
+      const { pet } = startedPet(
+        { random: () => random },
+        { settings: { chatter: frequency } }
+      );
+
+      const [first] = chatterTimes(pet, 31 * MIN);
+
+      expect(first).toBeGreaterThanOrEqual(from * MIN);
+      expect(first).toBeLessThanOrEqual(to * MIN + 1000);
+    }
+  );
+
+  it("defaults to the normal frequency", () => {
+    const { pet } = startedPet({ random: () => 0 });
+
+    const [first] = chatterTimes(pet, 31 * MIN);
+
+    expect(first).toBeGreaterThanOrEqual(8 * MIN);
+    expect(first).toBeLessThanOrEqual(8 * MIN + 1000);
+  });
+
+  it("schedules the next Chatter after each one", () => {
+    const { pet } = startedPet(
+      { random: () => 0 },
+      { settings: { chatter: "high" } }
+    );
+
+    const times = chatterTimes(pet, 13 * MIN);
+
+    expect(times).toHaveLength(3);
+    expect(times[1]! - times[0]!).toBeGreaterThanOrEqual(4 * MIN);
+  });
+
+  it("says a Line from the current Mood's pool", () => {
+    const { pet } = startedPet(
+      { random: () => 0, lines: lines({ normal: ["blah"] }) },
+      { settings: { chatter: "high" } }
+    );
+
+    const out = pet.tick({ now: 4 * MIN, displays: [primary] });
+
+    expect(said(out)).toEqual(["blah"]);
+  });
+
+  it("never chatters when off", () => {
+    const { pet } = startedPet({}, { settings: { chatter: "off" } });
+
+    expect(chatterTimes(pet, 120 * MIN)).toEqual([]);
+  });
+
+  it("starts chattering when switched on from off", () => {
+    const { pet } = startedPet(
+      { random: () => 0 },
+      { settings: { chatter: "off" } }
+    );
+    chatterTimes(pet, 10 * MIN);
+    pet.configure({ chatter: "high" });
+
+    const [first] = chatterTimes(pet, 20 * MIN, {}, 10 * MIN);
+
+    expect(first).toBeGreaterThanOrEqual(14 * MIN);
+    expect(first).toBeLessThanOrEqual(14 * MIN + 1000);
+  });
+
+  describe("while the user is typing", () => {
+    const high = { chatter: "high" } as const;
+
+    it("holds back by default and speaks once typing stops", () => {
+      const { pet } = startedPet({ random: () => 0 }, { settings: high });
+
+      expect(chatterTimes(pet, 6 * MIN, { typing: true })).toEqual([]);
+      const [first] = chatterTimes(pet, 7 * MIN, { typing: false }, 6 * MIN);
+
+      expect(first).toBe(6 * MIN + 1000);
+    });
+
+    it("chatters as usual when the setting is off", () => {
+      const { pet } = startedPet(
+        { random: () => 0 },
+        { settings: { ...high, quietWhileTyping: false } }
+      );
+
+      const [first] = chatterTimes(pet, 6 * MIN, { typing: true });
+
+      expect(first).toBeLessThanOrEqual(4 * MIN + 1000);
+    });
+  });
+
+  it("holds back while the pet is being dragged", () => {
+    const { pet } = startedPet(
+      { random: () => 0 },
+      { settings: { chatter: "high" } }
+    );
+    pet.pointer({
+      type: "down",
+      time: 4 * MIN - 500,
+      position: BODY,
+      hit: "body",
+    });
+    pet.pointer({
+      type: "move",
+      time: 4 * MIN - 400,
+      position: { x: BODY.x - 100, y: BODY.y },
+      hit: "body",
+    });
+
+    const during = pet.tick({ now: 4 * MIN + 1000, displays: [primary] });
+
+    expect(during.snapshot.motion).toBe("dragging");
+    expect(said(during)).toEqual([]);
+  });
+
+  it("holds back while the pet is sleepy", () => {
+    const { pet } = startedPet(
+      { random: () => 0 },
+      { settings: { chatter: "high" } }
+    );
+
+    const times = chatterTimes(pet, 10 * MIN, { hour: 23.5, afkSeconds: 181 });
+
+    expect(times).toEqual([]);
   });
 });

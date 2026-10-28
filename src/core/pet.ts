@@ -54,7 +54,14 @@ export interface Settings {
   readonly dragPhysics: DragPhysics;
   /** 深夜使用者離開後是否睡覺。 */
   readonly nightSleep: boolean;
+  /** Chatter（主動說話）的頻率。 */
+  readonly chatter: ChatterFrequency;
+  /** 使用者正在打字時不 Chatter。 */
+  readonly quietWhileTyping: boolean;
 }
+
+const CHATTER_FREQUENCIES = ["off", "low", "normal", "high"] as const;
+export type ChatterFrequency = (typeof CHATTER_FREQUENCIES)[number];
 
 const DRAG_PHYSICS = ["standard", "lively", "off"] as const;
 export type DragPhysics = (typeof DRAG_PHYSICS)[number];
@@ -179,6 +186,17 @@ const DEFAULT_SETTINGS: Settings = {
   name: "小柴",
   dragPhysics: "standard",
   nightSleep: true,
+  chatter: "normal",
+  quietWhileTyping: true,
+};
+/** 各頻率兩次 Chatter 之間的間隔範圍（ms）。 */
+const CHATTER_INTERVAL: Record<
+  Exclude<ChatterFrequency, "off">,
+  { min: number; max: number }
+> = {
+  low: { min: 20 * 60_000, max: 30 * 60_000 },
+  normal: { min: 8 * 60_000, max: 15 * 60_000 },
+  high: { min: 4 * 60_000, max: 6 * 60_000 },
 };
 /** 深夜時段：NIGHT_START ≤ 時刻 < 24 或 0 ≤ 時刻 < NIGHT_END（時）。 */
 const NIGHT_START = 23;
@@ -318,6 +336,8 @@ export function createPet(deps: PetDeps): Pet {
   let presence = { afkSeconds: 0, typing: false, hour: 12 };
   /** Woken 清醒期結束的時間；沒在清醒期為 undefined。 */
   let wokenUntil: number | undefined;
+  /** 下一次 Chatter 的時間；關閉時為 undefined。 */
+  let nextChatter: number | undefined;
   /** 不是當下動作直接產生、要在下次輸出時一併送出的效果。 */
   let pending: PetEffect[] = [];
   /** 下次輸出時要求存檔。 */
@@ -356,6 +376,31 @@ export function createPet(deps: PetDeps): Pet {
       sulking,
     };
     return { type: "save", petState, settings };
+  }
+
+  /** 從 from 起依頻率抽出下一次 Chatter 的時間。 */
+  function scheduleChatter(from: number): void {
+    if (settings.chatter === "off") {
+      nextChatter = undefined;
+      return;
+    }
+    const { min, max } = CHATTER_INTERVAL[settings.chatter];
+    nextChatter = from + min + deps.random() * (max - min);
+  }
+
+  /** 到時間且沒被打斷（打字、拖拽、睡覺）才說話；錯過的就等到可以時再說。 */
+  function chatter(now: number): PetEffect[] {
+    if (nextChatter === undefined || now < nextChatter) return [];
+    const pet = current();
+    if (
+      drag ||
+      pet.mood === "sleepy" ||
+      (presence.typing && settings.quietWhileTyping)
+    ) {
+      return [];
+    }
+    scheduleChatter(now);
+    return [say(linePool(pet))];
   }
 
   function say(pool: LinePool): PetEffect {
@@ -663,6 +708,7 @@ export function createPet(deps: PetDeps): Pet {
       const saved = fields(input.saved);
       displays = input.displays;
       lastTick = input.now;
+      scheduleChatter(input.now);
       neglect = Math.max(0, numberOr(saved["neglect"], 0));
       neglectSinceDecay = Math.max(0, numberOr(saved["neglectSinceDecay"], 0));
       sulking = saved["sulking"] === true || neglect > SULKY_NEGLECT;
@@ -688,7 +734,9 @@ export function createPet(deps: PetDeps): Pet {
       };
       decay(now);
       patIfHeld(now);
-      return output([...carry(now), ...settle(now)]);
+      const effects = [...carry(now), ...settle(now)];
+      if (effects.some((e) => e.type === "say")) return output(effects);
+      return output([...effects, ...chatter(now)]);
     },
     stop({ now }) {
       decay(now);
@@ -696,7 +744,9 @@ export function createPet(deps: PetDeps): Pet {
       return output();
     },
     configure(change) {
+      const before = settings.chatter;
       settings = { ...settings, ...change };
+      if (settings.chatter !== before) scheduleChatter(lastTick);
       saveRequested = true;
       return output();
     },
@@ -753,7 +803,8 @@ function numberOr(value: unknown, fallback: number): number {
 }
 
 function readSettings(saved: unknown): Settings {
-  const { name, dragPhysics, nightSleep } = fields(saved);
+  const { name, dragPhysics, nightSleep, chatter, quietWhileTyping } =
+    fields(saved);
   return {
     name:
       typeof name === "string" && name !== "" ? name : DEFAULT_SETTINGS.name,
@@ -764,6 +815,13 @@ function readSettings(saved: unknown): Settings {
       typeof nightSleep === "boolean"
         ? nightSleep
         : DEFAULT_SETTINGS.nightSleep,
+    chatter:
+      CHATTER_FREQUENCIES.find((f) => f === chatter) ??
+      DEFAULT_SETTINGS.chatter,
+    quietWhileTyping:
+      typeof quietWhileTyping === "boolean"
+        ? quietWhileTyping
+        : DEFAULT_SETTINGS.quietWhileTyping,
   };
 }
 
