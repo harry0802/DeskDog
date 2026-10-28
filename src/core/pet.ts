@@ -128,6 +128,11 @@ const COLD_AFFECTION = 30;
 const DRAG_THRESHOLD = 6;
 /** 按住不動達此時間即為 Pat，放開也不再是 Click（ms）。 */
 const PAT_HOLD = 1000;
+/** Affection Decay：每累積這麼久的 Neglect 扣 1（ms）。 */
+const DECAY_INTERVAL = 60 * 60_000;
+/** 高於此值時衰減較快，避免狗狗長時間停在開心。 */
+const FAST_DECAY_ABOVE = 80;
+const FAST_DECAY_INTERVAL = 3 * 60_000;
 
 export function createPet(deps: PetDeps): Pet {
   let snapshot: PetSnapshot | undefined;
@@ -136,6 +141,9 @@ export function createPet(deps: PetDeps): Pet {
     | { position: Point; time: number; dragged: boolean; patted: boolean }
     | undefined;
   let settings = DEFAULT_SETTINGS;
+  let lastTick = 0;
+  /** 上次扣 Affection 後累積的 Neglect（ms）。 */
+  let neglectSinceDecay = 0;
   const decks = createLineDecks(deps.lines, deps.random);
 
   function current(): PetSnapshot {
@@ -169,9 +177,36 @@ export function createPet(deps: PetDeps): Pet {
     return current();
   }
 
+  /** Interaction 重置 Neglect：衰減重新計時。 */
+  function interact(now: number): void {
+    decay(now);
+    neglectSinceDecay = 0;
+  }
+
   // 只有 Pat 會增加 Affection；Click 只說一句話。
-  function click(): PetOutput {
+  function click(now: number): PetOutput {
+    interact(now);
     return output([say(linePool(current()))]);
+  }
+
+  /** 依上次 tick 以來的 Neglect 扣 Affection。 */
+  function decay(now: number): void {
+    let remaining = now - lastTick;
+    lastTick = now;
+    while (remaining > 0 && current().affection > 0) {
+      const interval =
+        current().affection > FAST_DECAY_ABOVE
+          ? FAST_DECAY_INTERVAL
+          : DECAY_INTERVAL;
+      const untilDecay = interval - neglectSinceDecay;
+      if (remaining < untilDecay) {
+        neglectSinceDecay += remaining;
+        return;
+      }
+      remaining -= untilDecay;
+      neglectSinceDecay = 0;
+      update(-1);
+    }
   }
 
   /** 按住不動達 PAT_HOLD 時觸發一次 Pat；回傳這次按住是否已 Pat。 */
@@ -179,6 +214,7 @@ export function createPet(deps: PetDeps): Pet {
     if (!press || press.dragged) return false;
     if (!press.patted && now - press.time >= PAT_HOLD) {
       press.patted = true;
+      interact(now);
       update(PAT_AFFECTION);
     }
     return press.patted;
@@ -187,6 +223,7 @@ export function createPet(deps: PetDeps): Pet {
   return {
     start(input) {
       settings = { ...DEFAULT_SETTINGS, ...input.settings };
+      lastTick = input.now;
       snapshot = homeSnapshot(
         primaryDisplay(input.displays),
         clampAffection(input.saved?.affection ?? DEFAULT_AFFECTION)
@@ -197,6 +234,7 @@ export function createPet(deps: PetDeps): Pet {
       ]);
     },
     tick({ now }) {
+      decay(now);
       patIfHeld(now);
       return output();
     },
@@ -220,7 +258,7 @@ export function createPet(deps: PetDeps): Pet {
         const patted = patIfHeld(event.time);
         const { dragged } = press;
         press = undefined;
-        if (!dragged && !patted) return click();
+        if (!dragged && !patted) return click(event.time);
         update();
       }
       return output();

@@ -20,7 +20,7 @@ _Avoid_: 親密度、好感值、love
 Pat 成立後到放開滑鼠為止的期間；期間 Mood 為 happy，不論 Affection 高低，放開即結束。
 
 **Affection Decay（好感衰減）**：
-被冷落時 Affection 隨時間緩慢下降；App 未執行的時間不計。
+被冷落時 Affection 隨時間下降：高於 80 時較快，80 以下緩慢；App 未執行的時間不計。
 
 **Annoyed（被惹毛）**：
 因被打擾（如連點）而產生的短暫不悅；冷卻時間到就自動消失。

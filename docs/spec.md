@@ -97,7 +97,7 @@ DeskDog 是一隻常駐 Windows 桌面的側面視角狗狗。牠站在螢幕工
 62. As a 使用者, I want Neglect 超過 45 分鐘時狗狗 sulky, so that 長時間冷落有後果。
 63. As a 使用者, I want 只有對狗狗本身的 Interaction（Click、Pat、Pickup）會重置 Neglect，我在其他程式上工作不算, so that 「專心工作沒理牠」也會讓牠孤單。
 64. As a 使用者, I want App 沒在執行的時間不計入 Neglect, so that 隔天開機牠不會一啟動就鬧彆扭。
-65. As a 使用者, I want 被冷落時 Affection Decay（每 1 小時 Neglect 約 -1，App 未執行不計）, so that 好感度有意義、不會永遠停在 100。
+65. As a 使用者, I want 被冷落時 Affection Decay（高於 80 時每 3 分鐘 Neglect -1，80 以下每 1 小時 -1，App 未執行不計）, so that 好感度有意義、不會一直停在開心。
 66. As a 使用者, I want sulky 時我的第一次 Interaction 只換來「轉頭哼一聲」與 sulkyCoaxing Line, so that 牠不會一點就好。
 67. As a 使用者, I want 在 30 秒內累積 3 次 Interaction 或 1 次 Pat 時觸發 Make-up 並說 makeUp Line, so that 哄好牠有成就感。
 68. As a 使用者, I want 23:00～07:00 且 AFK 超過 3 分鐘時狗狗 sleepy 並睡覺, so that 深夜我離開後牠會乖乖睡。
@@ -194,7 +194,7 @@ type Motion =
 | 連點判定                | 1.5 秒內 5 次 Click → Affection -1、annoyed 10 秒 |
 | Click / Pat / 安全 Drop | 0 / +4 / +1                                       |
 | Afterglow               | 持續到放開滑鼠                                    |
-| Affection Decay         | 每 1 小時 Neglect -1                              |
+| Affection Decay         | >80：每 3 分鐘 Neglect -1；≤80：每 1 小時 -1      |
 | Make-up                 | 30 秒內 3 次 Interaction 或 1 次 Pat              |
 | Woken                   | 清醒 2 分鐘                                       |
 | 拖太久                  | 8 秒說 Line；15 秒進 annoyed                      |

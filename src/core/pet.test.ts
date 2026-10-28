@@ -353,3 +353,49 @@ describe("Affection range", () => {
     expect(pat(pet).snapshot.affection).toBe(100);
   });
 });
+
+const MINUTE = 60_000;
+
+describe("Affection Decay", () => {
+  it("loses 1 Affection per hour of Neglect at or below 80", () => {
+    const { pet } = startedPet({}, { now: 0, saved: { affection: 60 } });
+
+    expect(tick(pet, 60 * MINUTE - 1).snapshot.affection).toBe(60);
+    expect(tick(pet, 60 * MINUTE).snapshot.affection).toBe(59);
+  });
+
+  it("drops from 100 to 80 at 1 per 3 minutes, then slows to 1 per hour", () => {
+    const { pet } = startedPet({}, { now: 0, saved: { affection: 100 } });
+
+    expect(tick(pet, 3 * MINUTE - 1).snapshot.affection).toBe(100);
+    expect(tick(pet, 3 * MINUTE).snapshot.affection).toBe(99);
+    expect(tick(pet, 60 * MINUTE).snapshot.affection).toBe(80);
+    expect(tick(pet, 120 * MINUTE - 1).snapshot.affection).toBe(80);
+    expect(tick(pet, 120 * MINUTE).snapshot.affection).toBe(79);
+  });
+
+  it("applies both rates correctly within a single long tick", () => {
+    const { pet } = startedPet({}, { now: 0, saved: { affection: 100 } });
+
+    // 前 60 分鐘 100 → 80，再 60 分鐘 80 → 79。
+    expect(tick(pet, 120 * MINUTE).snapshot.affection).toBe(79);
+  });
+
+  it("restarts the Neglect count after a Click", () => {
+    const { pet } = startedPet({}, { now: 0, saved: { affection: 60 } });
+    tick(pet, 59 * MINUTE);
+
+    const at = 59 * MINUTE;
+    pet.pointer({ type: "down", time: at, position: BODY, hitBody: true });
+    pet.pointer({ type: "up", time: at + 100, position: BODY, hitBody: true });
+
+    expect(tick(pet, 61 * MINUTE).snapshot.affection).toBe(60);
+    expect(tick(pet, at + 100 + 60 * MINUTE).snapshot.affection).toBe(59);
+  });
+
+  it("stops at 0", () => {
+    const { pet } = startedPet({}, { now: 0, saved: { affection: 1 } });
+
+    expect(tick(pet, 10 * 60 * MINUTE).snapshot.affection).toBe(0);
+  });
+});
