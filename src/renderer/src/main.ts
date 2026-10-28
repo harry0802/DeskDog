@@ -104,6 +104,7 @@ function sendPointer(type: PointerEvent["type"], e: MouseEvent): void {
 }
 
 window.addEventListener("mousemove", (e) => {
+  rig.lookAt({ x: e.clientX, y: e.clientY });
   if (pressed) {
     sendPointer("move", e);
     return;

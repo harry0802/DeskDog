@@ -75,6 +75,19 @@ const RUB_ANGLE = 0.12;
 const DREAM_WAG_DURATION = 700;
 const DREAM_WAG_ANGLE = 0.3;
 
+/** 待機生命感：隨機眨眼、偶爾搖尾、頭與眼睛朝游標看。 */
+const BLINK_DURATION = 140;
+const BLINK_MIN_GAP = 2000;
+const BLINK_MAX_GAP = 6000;
+const IDLE_WAG_MIN_GAP = 8000;
+const IDLE_WAG_MAX_GAP = 20000;
+const IDLE_WAG_DURATION = 900;
+const IDLE_WAG_ANGLE = 0.3;
+const LOOK_HEAD_ANGLE = 0.12;
+const LOOK_EYE_SHIFT = 3;
+/** 游標距離超過此值時視為已達最大偏轉。 */
+const LOOK_RANGE = 300;
+
 /** 各 Mood 顯示的表情 Part；未列出的眼睛、嘴巴 Part 隱藏。 */
 const EXPRESSIONS: Partial<Record<Mood, readonly string[]>> = {
   happy: ["eyes_happy", "mouth_happy"],
@@ -136,6 +149,12 @@ export class Rig {
   private rubElapsed = RUB_DURATION;
   private dreamWagElapsed = DREAM_WAG_DURATION;
   private snapshotFacing = -1;
+  private blinkIn = nextGap(BLINK_MIN_GAP, BLINK_MAX_GAP);
+  private blinkElapsed = BLINK_DURATION;
+  private idleWagIn = nextGap(IDLE_WAG_MIN_GAP, IDLE_WAG_MAX_GAP);
+  private idleWagElapsed = IDLE_WAG_DURATION;
+  /** 游標相對於狗狗頭部的偏移（覆蓋層視窗座標）；未知時為 undefined。 */
+  private cursor: Point | undefined;
   private lift = 0;
   private stretch = 0;
   private readonly tilt = new Spring(TILT_STIFFNESS, TILT_DAMPING);
@@ -186,6 +205,11 @@ export class Rig {
     }
   }
 
+  /** 游標位置（覆蓋層視窗座標），頭與眼睛會朝向它。 */
+  lookAt(point: Point): void {
+    this.cursor = point;
+  }
+
   playGreeting(): void {
     this.greetingElapsed = 0;
   }
@@ -201,6 +225,10 @@ export class Rig {
 
   playDreamWag(): void {
     this.dreamWagElapsed = 0;
+  }
+
+  private get blinking(): boolean {
+    return this.blinkElapsed < BLINK_DURATION;
   }
 
   private get rubbing(): boolean {
@@ -225,6 +253,9 @@ export class Rig {
       DREAM_WAG_DURATION,
       this.dreamWagElapsed + deltaMs
     );
+    const wasBlinking = this.blinking;
+    this.updateIdleTimers(deltaMs);
+    if (wasBlinking !== this.blinking) this.showExpression();
     const wasRubbing = this.rubbing;
     this.rubElapsed = Math.min(RUB_DURATION, this.rubElapsed + deltaMs);
     // 揉完眼睛：睜開眼睛。
@@ -283,8 +314,15 @@ export class Rig {
       ? Math.sin((this.rubElapsed / RUB_DURATION) * RUB_SHAKES * Math.PI * 2) *
         RUB_ANGLE
       : 0;
+    const look = this.lookOffset();
+    const lookable = this.motion !== "sleeping" && this.mood !== "sulky";
+    const lookX = lookable ? look.x : 0;
     for (const { part, sprite } of this.parts) {
-      if (isHeadPart(part.name)) sprite.rotation = rub;
+      if (!isHeadPart(part.name)) continue;
+      sprite.rotation = rub + lookX * LOOK_HEAD_ANGLE;
+      if (isExpression(part.name) && part.name.startsWith("eyes_")) {
+        sprite.x = part.pivot.x + lookX * LOOK_EYE_SHIFT;
+      }
     }
     for (const ear of this.ears) {
       ear.rotation = fling + droop;
@@ -307,8 +345,42 @@ export class Rig {
               (this.dreamWagElapsed / DREAM_WAG_DURATION) * Math.PI * 4
             ) * DREAM_WAG_ANGLE
           : 0;
-      this.tail.rotation = wag + dream + fling;
+      const idleWag =
+        this.idleWagElapsed < IDLE_WAG_DURATION
+          ? Math.sin((this.idleWagElapsed / IDLE_WAG_DURATION) * Math.PI * 6) *
+            IDLE_WAG_ANGLE
+          : 0;
+      this.tail.rotation = wag + dream + idleWag + fling;
     }
+  }
+
+  private updateIdleTimers(deltaMs: number): void {
+    this.blinkElapsed = Math.min(BLINK_DURATION, this.blinkElapsed + deltaMs);
+    this.blinkIn -= deltaMs;
+    if (this.blinkIn <= 0) {
+      this.blinkElapsed = 0;
+      this.blinkIn = nextGap(BLINK_MIN_GAP, BLINK_MAX_GAP);
+    }
+    this.idleWagElapsed = Math.min(
+      IDLE_WAG_DURATION,
+      this.idleWagElapsed + deltaMs
+    );
+    this.idleWagIn -= deltaMs;
+    if (this.idleWagIn <= 0) {
+      if (this.motion === "idle" && this.mood === "normal") {
+        this.idleWagElapsed = 0;
+      }
+      this.idleWagIn = nextGap(IDLE_WAG_MIN_GAP, IDLE_WAG_MAX_GAP);
+    }
+  }
+
+  /** 游標方向，水平分量在翻轉後的局部座標中，範圍 -1～1。 */
+  private lookOffset(): Point {
+    if (!this.cursor) return { x: 0, y: 0 };
+    const head = this.headTop();
+    const dx = clamp((this.cursor.x - head.x) / LOOK_RANGE, -1, 1);
+    const dy = clamp((this.cursor.y - head.y) / LOOK_RANGE, -1, 1);
+    return { x: dx * this.facing, y: dy };
   }
 
   /** 抬起、傾斜、拉伸與落地壓扁：整隻狗以腳底為基準的變換。 */
@@ -412,15 +484,24 @@ export class Rig {
   private showExpression(): void {
     // 剛被抱起時一律是驚訝（睜大的眼睛），不論 Mood。
     // 揉眼睛時瞇著眼。
-    const shown = this.rubbing
+    const base = this.rubbing
       ? ["eyes_sleep", "mouth_idle"]
       : this.motion === "pickedUp"
         ? DEFAULT_EXPRESSION
         : (EXPRESSIONS[this.mood] ?? DEFAULT_EXPRESSION);
+    // 眨眼：暫時以閉眼取代目前的眼睛，嘴巴不變。
+    const shown =
+      this.blinking && this.motion !== "pickedUp"
+        ? base.map((name) => (name.startsWith("eyes_") ? "eyes_sleep" : name))
+        : base;
     for (const { part, sprite } of this.parts) {
       if (isExpression(part.name)) sprite.visible = shown.includes(part.name);
     }
   }
+}
+
+function nextGap(min: number, max: number): number {
+  return min + Math.random() * (max - min);
 }
 
 function clamp(value: number, min: number, max: number): number {
