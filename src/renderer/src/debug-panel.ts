@@ -1,4 +1,4 @@
-// 開發用除錯面板：顯示 Mood、Affection 與 Afterglow，只在開發模式出現。
+// 開發用除錯面板：顯示 Mood、Motion、Affection 與 Afterglow，只在開發模式出現。
 import { Container, Graphics, Text } from "pixi.js";
 import type { PetSnapshot, Rect } from "../../core/pet";
 
@@ -33,6 +33,7 @@ export class DebugPanel {
 
     this.text.text = [
       `Mood:      ${snapshot.mood}`,
+      `Motion:    ${snapshot.motion}`,
       `Affection: ${snapshot.affection}`,
       `Afterglow: ${snapshot.afterglow ? "摸著中" : "—"}`,
     ].join("\n");

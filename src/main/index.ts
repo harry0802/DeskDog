@@ -11,6 +11,8 @@ import lines from "./lines.json";
 
 /** 核心 tick 間隔（ms）；Pat 判定依賴它。 */
 const TICK_INTERVAL = 100;
+/** 狗狗在動（抱起、下落、落地）時加快 tick，讓下落平順（ms）。 */
+const ACTIVE_TICK_INTERVAL = 16;
 
 // 每個螢幕一個全螢幕透明覆蓋層（ADR-0001）。key 為 webContents id。
 const overlays = new Map<number, Electron.Display>();
@@ -87,9 +89,14 @@ app.whenReady().then(() => {
     publish(pet.pointer(pointer));
   });
 
-  setInterval(() => {
+  function loop(): void {
     publish(pet.tick({ now: Date.now(), displays: petDisplays() }));
-  }, TICK_INTERVAL);
+    setTimeout(
+      loop,
+      snapshot.motion === "idle" ? TICK_INTERVAL : ACTIVE_TICK_INTERVAL
+    );
+  }
+  setTimeout(loop, TICK_INTERVAL);
 
   ipcMain.on(IPC.setHit, (event, hit: boolean) => {
     BrowserWindow.fromWebContents(event.sender)?.setIgnoreMouseEvents(!hit, {

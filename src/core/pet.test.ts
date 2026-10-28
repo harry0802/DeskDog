@@ -106,7 +106,10 @@ describe("Click", () => {
       });
 
       expect(said(out)).toHaveLength(isClick ? 1 : 0);
-      expect(out.snapshot.affection).toBe(started.snapshot.affection);
+      // 移動 7px 是 Pickup，Drop 另有 Affection 規則（見 Drop）。
+      if (isClick) {
+        expect(out.snapshot.affection).toBe(started.snapshot.affection);
+      }
     }
   );
 
@@ -452,5 +455,217 @@ describe("Affection Decay", () => {
     const { pet } = startedPet({}, { now: 0, saved: { affection: 1 } });
 
     expect(tick(pet, 10 * 60 * MINUTE).snapshot.affection).toBe(0);
+  });
+});
+
+describe("Pickup", () => {
+  it("lifts the pet after moving 7 px on the body and says a pickedUp Line", () => {
+    const { pet } = startedPet();
+
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
+    const out = pet.pointer({
+      type: "move",
+      time: 1050,
+      position: { x: BODY.x + 7, y: BODY.y },
+      hit: "body",
+    });
+
+    expect(out.snapshot.motion).toBe("pickedUp");
+    expect(said(out)).toHaveLength(1);
+    expect(["pickedUp-1", "pickedUp-2"]).toContain(said(out)[0]);
+    expect(tick(pet, 1400).snapshot.motion).toBe("dragging");
+  });
+
+  it("carries the pet with the cursor but keeps it inside the screen", () => {
+    const { pet, started } = startedPet();
+    const home = started.snapshot.position;
+    const move = (time: number, position: Point) =>
+      pet.pointer({ type: "move", time, position, hit: "body" });
+
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
+    move(1050, { x: BODY.x - 10, y: BODY.y });
+    expect(
+      move(1100, { x: BODY.x - 300, y: BODY.y - 400 }).snapshot.position
+    ).toEqual({ x: home.x - 300, y: home.y - 400 });
+
+    // 整隻狗留在工作區域內：腳底距左右緣至少半個身寬、距頂端至少一個身高。
+    const topRight = move(1150, { x: 9999, y: -9999 }).snapshot.position;
+    const bottomLeft = move(1200, { x: -9999, y: 9999 }).snapshot.position;
+    expect(topRight.x).toBeLessThan(2560);
+    expect(topRight.y).toBeGreaterThan(0);
+    expect(bottomLeft.x).toBeGreaterThan(0);
+    expect(bottomLeft.y).toBe(1392);
+    expect(topRight.x - bottomLeft.x).toBeGreaterThan(2560 - 300);
+    expect(bottomLeft.y - topRight.y).toBeGreaterThan(1392 - 300);
+  });
+});
+
+/** 從 BODY 抱起並慢慢拖到 to，在 at（≥ 1500）時放開；Drop 無速度。 */
+function dragAndDrop(
+  pet: ReturnType<typeof createPet>,
+  to: Point,
+  at: number
+): PetOutput {
+  pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
+  pet.pointer({
+    type: "move",
+    time: 1050,
+    position: { x: BODY.x - 10, y: BODY.y },
+    hit: "body",
+  });
+  // 與上一次移動相隔超過速度取樣窗：慢慢搬，不算快速拖拽。
+  pet.pointer({ type: "move", time: 1500, position: to, hit: "body" });
+  return pet.pointer({ type: "up", time: at, position: to, hit: "body" });
+}
+
+describe("Dragging velocity", () => {
+  it("reports the cursor's recent velocity while dragging, and 0 once it stops", () => {
+    const { pet, started } = startedPet();
+    expect(started.snapshot.velocity).toEqual({ x: 0, y: 0 });
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
+
+    // 每 20ms 往右 10px：500 px/s。
+    let out = started;
+    for (let i = 1; i <= 6; i++) {
+      out = pet.pointer({
+        type: "move",
+        time: 1000 + 20 * i,
+        position: { x: BODY.x + 10 * i, y: BODY.y },
+        hit: "body",
+      });
+    }
+    expect(out.snapshot.velocity.x).toBeCloseTo(500);
+    expect(out.snapshot.velocity.y).toBe(0);
+
+    expect(tick(pet, 1400).snapshot.velocity).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe("Drop", () => {
+  it("falls to the Ground under gravity, then lands and goes idle", () => {
+    const { pet, started } = startedPet();
+    const ground = started.snapshot.position.y;
+
+    // 抬高 600px 後放開。
+    const dropped = dragAndDrop(pet, { x: BODY.x, y: BODY.y - 600 }, 2000);
+    expect(dropped.snapshot.motion).toBe("falling");
+    expect(dropped.snapshot.position.y).toBe(ground - 600);
+
+    // 0.5 秒後已加速下落，但還沒到 Ground。
+    const midair = tick(pet, 2500).snapshot;
+    expect(midair.motion).toBe("falling");
+    expect(midair.position.y).toBeGreaterThan(
+      ground - 600 + (1400 * 0.5 ** 2) / 2
+    );
+    expect(midair.position.y).toBeLessThan(
+      ground - 600 + (1800 * 0.5 ** 2) / 2
+    );
+
+    const landed = tick(pet, 3000);
+    expect(landed.snapshot.motion).toBe("landing");
+    expect(landed.snapshot.position.y).toBe(ground);
+    expect(landed.snapshot.position.x).toBe(dropped.snapshot.position.x);
+
+    const idle = tick(pet, 3500);
+    expect(idle.snapshot.motion).toBe("idle");
+    expect(said(idle)).toHaveLength(1);
+    expect(["landing-1", "landing-2"]).toContain(said(idle)[0]);
+  });
+
+  it.each([
+    { height: 600, says: true },
+    { height: 100, says: false },
+  ])(
+    "dropped from $height px: says a falling Line = $says",
+    ({ height, says }) => {
+      const { pet } = startedPet();
+
+      const out = dragAndDrop(pet, { x: BODY.x, y: BODY.y - height }, 2000);
+
+      expect(said(out)).toEqual(says ? ["falling-1"] : []);
+    }
+  );
+
+  it("can be caught again in mid-air without falling out of the hand", () => {
+    const { pet } = startedPet();
+    const high = { x: BODY.x, y: BODY.y - 600 };
+    dragAndDrop(pet, high, 2000);
+    const midair = tick(pet, 2200).snapshot.position;
+
+    // 在空中再抓一次（游標在狗身上，相對位置同 BODY 之於腳底）。
+    const grab = { x: BODY.x, y: midair.y - 92 };
+    pet.pointer({ type: "down", time: 2250, position: grab, hit: "body" });
+    pet.pointer({
+      type: "move",
+      time: 2300,
+      position: { x: grab.x + 10, y: grab.y },
+      hit: "body",
+    });
+    const held = tick(pet, 3500).snapshot;
+
+    expect(held.motion).toBe("dragging");
+    expect(held.position.y).toBe(midair.y);
+  });
+
+  it("ignores a release far from the press when no move came in between", () => {
+    const { pet } = startedPet();
+
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
+    pet.pointer({
+      type: "up",
+      time: 1100,
+      position: { x: BODY.x + 50, y: BODY.y },
+      hit: "body",
+    });
+
+    expect(tick(pet, 1500).snapshot.motion).toBe("idle");
+  });
+
+  it("adds 1 Affection for a safe Drop", () => {
+    const { pet, started } = startedPet();
+
+    const out = dragAndDrop(pet, { x: BODY.x - 200, y: BODY.y - 100 }, 2000);
+
+    expect(out.snapshot.affection).toBe(started.snapshot.affection + 1);
+  });
+
+  it("says fastDragging once when shaken fast, and that Drop adds no Affection", () => {
+    const { pet, started } = startedPet();
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
+    pet.pointer({
+      type: "move",
+      time: 1050,
+      position: { x: BODY.x - 10, y: BODY.y },
+      hit: "body",
+    });
+
+    // 每 16ms 移動 50px（約 3000 px/s）。
+    const lines: string[] = [];
+    let at = BODY;
+    for (let i = 1; i <= 10; i++) {
+      at = { x: BODY.x - 10 - 50 * i, y: BODY.y - 200 };
+      lines.push(
+        ...said(
+          pet.pointer({
+            type: "move",
+            time: 1050 + 16 * i,
+            position: at,
+            hit: "body",
+          })
+        )
+      );
+    }
+    expect(lines).toHaveLength(1);
+    expect(["fastDragging-1", "fastDragging-2"]).toContain(lines[0]);
+
+    // 停下來一陣子再放開。
+    tick(pet, 1500);
+    const out = pet.pointer({
+      type: "up",
+      time: 2000,
+      position: at,
+      hit: "body",
+    });
+    expect(out.snapshot.affection).toBe(started.snapshot.affection);
   });
 });

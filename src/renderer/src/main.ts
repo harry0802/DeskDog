@@ -1,7 +1,7 @@
 // CSP 不允許 unsafe-eval，改用 Pixi 預先產生的 shader 同步程式。
 import "pixi.js/unsafe-eval";
 import { Application } from "pixi.js";
-import type { PetOutput, PointerEvent } from "../../core/pet";
+import type { Motion, PetOutput, PointerEvent } from "../../core/pet";
 import { Bubble } from "./bubble";
 import { DebugPanel } from "./debug-panel";
 import { Hearts } from "./hearts";
@@ -18,7 +18,10 @@ await app.init({
   resolution: window.devicePixelRatio,
   autoDensity: true,
 });
-app.ticker.maxFPS = 30;
+/** 待機 30fps；抱起、下落、落地時 60fps。 */
+const IDLE_FPS = 30;
+const ACTIVE_FPS = 60;
+app.ticker.maxFPS = IDLE_FPS;
 document.body.appendChild(app.canvas);
 
 const rig = new Rig(createPlaceholderParts(app.renderer), displayId, bounds);
@@ -38,8 +41,17 @@ app.ticker.add((ticker) => {
   bubble.update(ticker.deltaMS);
 });
 
+/** 抱著狗狗時游標變成抓取狀態。 */
+const isCarried = (motion: Motion) =>
+  motion === "pickedUp" || motion === "dragging";
+
 function render({ snapshot, effects }: PetOutput): void {
   rig.apply(snapshot);
+  app.ticker.maxFPS = snapshot.motion === "idle" ? IDLE_FPS : ACTIVE_FPS;
+  document.body.style.cursor =
+    isCarried(snapshot.motion) && rig.view.visible ? "grabbing" : "";
+  // 拖拽中 Bubble 跟著頭頂走。
+  if (bubble.view.visible) bubble.follow(rig.headTop());
   debugPanel?.show(snapshot, rig.footprint(), rig.view.visible);
   hearts.setActive(snapshot.afterglow && rig.view.visible);
   // 只有狗狗所在螢幕的覆蓋層演出效果。

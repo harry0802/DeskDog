@@ -1,12 +1,15 @@
 // Rig：把核心快照映射成 Part 的變換（ADR-0002），並做逐像素命中。
 import { Container, Sprite } from "pixi.js";
-import type {
-  DisplayId,
-  HitRegion,
-  Mood,
-  PetSnapshot,
-  Point,
-  Rect,
+import {
+  FAST_DRAG_SPEED,
+  LANDING_DURATION,
+  type DisplayId,
+  type HitRegion,
+  type Mood,
+  type Motion,
+  type PetSnapshot,
+  type Point,
+  type Rect,
 } from "../../core/pet";
 import { CANVAS, FEET, HEAD_TOP, isHeadPart, type Part } from "./parts";
 
@@ -22,6 +25,31 @@ const HAPPY_HOP_DURATION = 320;
 const HAPPY_HOP_HEIGHT = 14;
 const HAPPY_WAG_PERIOD = 240;
 const HAPPY_WAG_ANGLE = 0.35;
+/** Pickup：身體抬起並輕微放大，驚訝時眼睛睜大、耳朵豎起。 */
+const LIFT_HEIGHT = 10;
+const LIFT_SCALE = 1.06;
+/** 抬起與拉伸趨近目標的速率（1/s）。 */
+const EASE_RATE = 14;
+const SURPRISED_EYES = 1.5;
+const PERKED_EARS = 1.2;
+/** 依游標水平速度傾斜，上限約 13 度；以彈簧阻尼跟上。 */
+const TILT_PER_SPEED = 0.00025;
+const MAX_TILT = (13 * Math.PI) / 180;
+const TILT_STIFFNESS = 120;
+const TILT_DAMPING = 14;
+/** 腿懸空下垂，以較軟的彈簧保持鉛直，產生鐘擺慣性。 */
+const LEG_STIFFNESS = 40;
+const LEG_DAMPING = 4;
+const HANGING_LEGS = 1.08;
+/** 快速拖拽：身體沿水平方向拉伸，耳朵與尾巴往反方向甩。 */
+const STRETCH_X = 0.18;
+const STRETCH_Y = 0.1;
+const FLING_ANGLE = 0.6;
+/** 下落時輕微往前轉。 */
+const FALL_TILT = 0.15;
+/** 落地壓扁的最大比例，LANDING_DURATION 內回彈。 */
+const SQUASH_X = 1.2;
+const SQUASH_Y = 0.75;
 
 /** 各 Mood 顯示的表情 Part；未列出的眼睛、嘴巴 Part 隱藏。 */
 const EXPRESSIONS: Partial<Record<Mood, readonly string[]>> = {
@@ -30,6 +58,28 @@ const EXPRESSIONS: Partial<Record<Mood, readonly string[]>> = {
 const DEFAULT_EXPRESSION = ["eyes_open", "mouth_idle"];
 const isExpression = (name: string) =>
   name.startsWith("eyes_") || name.startsWith("mouth_");
+const isLeg = (name: string) => name.startsWith("leg_");
+const isEar = (name: string) => name.startsWith("ear_");
+const isCarried = (motion: Motion) =>
+  motion === "pickedUp" || motion === "dragging";
+
+/** 半隱式 Euler 的阻尼彈簧。 */
+class Spring {
+  value = 0;
+  private speed = 0;
+
+  constructor(
+    private readonly stiffness: number,
+    private readonly damping: number
+  ) {}
+
+  step(target: number, dt: number): number {
+    this.speed +=
+      (this.stiffness * (target - this.value) - this.damping * this.speed) * dt;
+    this.value += this.speed * dt;
+    return this.value;
+  }
+}
 
 interface RiggedPart {
   readonly part: Part;
@@ -40,10 +90,22 @@ export class Rig {
   readonly view = new Container();
   private readonly parts: RiggedPart[];
   private readonly tail: Sprite | undefined;
+  private readonly eyes: Sprite | undefined;
+  private readonly legs: Sprite[];
+  private readonly ears: Sprite[];
   private base: Point = { x: 0, y: 0 };
+  /** 1 為面向右（佔位 Part 的方向），-1 為面向左。 */
+  private facing = -1;
   private mood: Mood = "normal";
+  private motion: Motion = "idle";
+  private velocity: Point = { x: 0, y: 0 };
   private elapsed = 0;
+  private motionElapsed = 0;
   private greetingElapsed = GREETING_DURATION;
+  private lift = 0;
+  private stretch = 0;
+  private readonly tilt = new Spring(TILT_STIFFNESS, TILT_DAMPING);
+  private readonly legSwing = new Spring(LEG_STIFFNESS, LEG_DAMPING);
 
   constructor(
     parts: readonly Part[],
@@ -58,7 +120,12 @@ export class Rig {
       this.view.addChild(sprite);
       return { part, sprite };
     });
-    this.tail = this.parts.find(({ part }) => part.name === "tail")?.sprite;
+    const sprites = (match: (name: string) => boolean) =>
+      this.parts.filter(({ part }) => match(part.name)).map((p) => p.sprite);
+    this.tail = sprites((name) => name === "tail")[0];
+    this.eyes = sprites((name) => name === "eyes_open")[0];
+    this.legs = sprites(isLeg);
+    this.ears = sprites(isEar);
     this.showExpression();
   }
 
@@ -70,7 +137,13 @@ export class Rig {
     };
     this.view.position.set(this.base.x, this.base.y);
     // 佔位 Part 面向右；面向左時水平翻轉。
-    this.view.scale.x = snapshot.facing === "left" ? -1 : 1;
+    this.facing = snapshot.facing === "left" ? -1 : 1;
+    this.velocity = snapshot.velocity;
+    if (snapshot.motion !== this.motion) {
+      this.motion = snapshot.motion;
+      this.motionElapsed = 0;
+      this.showExpression();
+    }
     if (snapshot.mood !== this.mood) {
       this.mood = snapshot.mood;
       this.showExpression();
@@ -83,11 +156,16 @@ export class Rig {
 
   update(deltaMs: number): void {
     this.elapsed += deltaMs;
+    this.motionElapsed += deltaMs;
     this.greetingElapsed = Math.min(
       GREETING_DURATION,
       this.greetingElapsed + deltaMs
     );
     const happy = this.mood === "happy";
+    // 跳幀時（例如視窗暫停後）避免彈簧爆衝。
+    const dt = Math.min(deltaMs, 50) / 1000;
+    const carried = isCarried(this.motion);
+    this.updateBody(dt, carried);
 
     const greetingPhase =
       (this.greetingElapsed / GREETING_DURATION) * GREETING_HOPS;
@@ -98,17 +176,66 @@ export class Rig {
       happy && hopTime < HAPPY_HOP_DURATION
         ? Math.sin((hopTime / HAPPY_HOP_DURATION) * Math.PI) * HAPPY_HOP_HEIGHT
         : 0;
-    this.view.position.set(
-      this.base.x,
-      this.base.y - Math.max(greetingHop, happyHop)
-    );
+    // 拖拽中不跳。
+    const hop = carried ? 0 : Math.max(greetingHop, happyHop);
+    this.view.position.set(this.base.x, this.base.y - hop - this.lift);
+
+    // 腿保持鉛直：在翻轉的 Container 內，局部旋轉方向跟著翻轉。
+    const legAngle =
+      this.legSwing.step(carried ? -this.tilt.value : 0, dt) * this.facing;
+    for (const leg of this.legs) {
+      leg.rotation = legAngle;
+      leg.scale.y = 1 + (HANGING_LEGS - 1) * (this.lift / LIFT_HEIGHT);
+    }
+
+    // 往前移動時耳朵與尾巴往後甩（局部座標中逆時針）。
+    const forward = Math.sign(this.velocity.x) * this.facing;
+    const fling = -forward * FLING_ANGLE * this.stretch;
+    const surprised = this.motion === "pickedUp";
+    for (const ear of this.ears) {
+      ear.rotation = fling;
+      ear.scale.y = surprised ? PERKED_EARS : 1;
+    }
+    this.eyes?.scale.set(surprised ? SURPRISED_EYES : 1);
 
     if (this.tail) {
-      this.tail.rotation = happy
+      const wag = happy
         ? Math.sin((this.elapsed / HAPPY_WAG_PERIOD) * Math.PI * 2) *
           HAPPY_WAG_ANGLE
         : 0;
+      this.tail.rotation = wag + fling;
     }
+  }
+
+  /** 抬起、傾斜、拉伸與落地壓扁：整隻狗以腳底為基準的變換。 */
+  private updateBody(dt: number, carried: boolean): void {
+    const ease = Math.min(1, dt * EASE_RATE);
+    this.lift += ((carried ? LIFT_HEIGHT : 0) - this.lift) * ease;
+    const speed = Math.hypot(this.velocity.x, this.velocity.y);
+    // 接近快速拖拽門檻時開始拉伸，達到門檻時拉到最滿。
+    const stretchTarget = carried
+      ? clamp((speed - FAST_DRAG_SPEED * 0.5) / (FAST_DRAG_SPEED * 0.5), 0, 1)
+      : 0;
+    this.stretch += (stretchTarget - this.stretch) * ease;
+
+    const tiltTarget = carried
+      ? clamp(this.velocity.x * TILT_PER_SPEED, -MAX_TILT, MAX_TILT)
+      : this.motion === "falling"
+        ? FALL_TILT * this.facing
+        : 0;
+    this.view.rotation = this.tilt.step(tiltTarget, dt);
+
+    // 落地瞬間壓到最扁，之後 ease-out 回彈。
+    const squash =
+      this.motion === "landing"
+        ? (1 - Math.min(1, this.motionElapsed / LANDING_DURATION)) ** 2
+        : 0;
+    const lifted = 1 + (LIFT_SCALE - 1) * (this.lift / LIFT_HEIGHT);
+    const sx =
+      lifted * (1 + STRETCH_X * this.stretch) * (1 + (SQUASH_X - 1) * squash);
+    const sy =
+      lifted * (1 - STRETCH_Y * this.stretch) * (1 - (1 - SQUASH_Y) * squash);
+    this.view.scale.set(sx * this.facing, sy);
   }
 
   /** 狗狗畫布範圍（不含跳躍），覆蓋層視窗座標。 */
@@ -123,9 +250,8 @@ export class Rig {
 
   /** 頭頂位置（不含跳躍），覆蓋層視窗座標；Bubble 的錨點。 */
   headTop(): Point {
-    const sign = this.view.scale.x;
     return {
-      x: this.base.x + (HEAD_TOP.x - FEET.x) * sign,
+      x: this.base.x + (HEAD_TOP.x - FEET.x) * this.facing,
       y: this.base.y + (HEAD_TOP.y - FEET.y),
     };
   }
@@ -157,9 +283,17 @@ export class Rig {
   }
 
   private showExpression(): void {
-    const shown = EXPRESSIONS[this.mood] ?? DEFAULT_EXPRESSION;
+    // 剛被抱起時一律是驚訝（睜大的眼睛），不論 Mood。
+    const shown =
+      this.motion === "pickedUp"
+        ? DEFAULT_EXPRESSION
+        : (EXPRESSIONS[this.mood] ?? DEFAULT_EXPRESSION);
     for (const { part, sprite } of this.parts) {
       if (isExpression(part.name)) sprite.visible = shown.includes(part.name);
     }
   }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }

@@ -29,6 +29,7 @@ export class Bubble {
     },
   });
   private remaining = 0;
+  private facing: PetSnapshot["facing"] = "left";
 
   constructor(private readonly screen: { width: number; height: number }) {
     this.view.addChild(this.background, this.text);
@@ -38,11 +39,25 @@ export class Bubble {
   /** anchor 為狗狗頭頂，覆蓋層視窗座標。 */
   show(line: string, anchor: Point, facing: PetSnapshot["facing"]): void {
     this.text.text = line;
+    this.facing = facing;
+    this.follow(anchor);
+
+    this.remaining = clamp(
+      MIN_DURATION + line.length * PER_CHAR,
+      MIN_DURATION,
+      MAX_DURATION
+    );
+    this.view.alpha = 1;
+    this.view.visible = true;
+  }
+
+  /** 狗狗移動時（例如拖拽）讓泡泡跟著頭頂。 */
+  follow(anchor: Point): void {
     const width = this.text.width + PADDING * 2;
     const height = this.text.height + PADDING * 2;
 
     // 泡泡預設長在狗狗面向的那一側；超出螢幕就翻到另一側，最後再夾回螢幕內。
-    const toward = facing === "left" ? -1 : 1;
+    const toward = this.facing === "left" ? -1 : 1;
     let x = toward < 0 ? anchor.x + TAIL_INSET - width : anchor.x - TAIL_INSET;
     if (x < MARGIN || x + width > this.screen.width - MARGIN) {
       x = toward < 0 ? anchor.x - TAIL_INSET : anchor.x + TAIL_INSET - width;
@@ -67,14 +82,6 @@ export class Bubble {
       .stroke({ width: 2, color: 0x2b1d14, alpha: 0.6 });
     this.text.position.set(PADDING, PADDING);
     this.view.position.set(x, y);
-
-    this.remaining = clamp(
-      MIN_DURATION + line.length * PER_CHAR,
-      MIN_DURATION,
-      MAX_DURATION
-    );
-    this.view.alpha = 1;
-    this.view.visible = true;
   }
 
   update(deltaMs: number): void {
