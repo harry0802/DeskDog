@@ -166,7 +166,13 @@ const FAST_LINE_COOLDOWN = 3000;
 /** Drop 後下落的重力加速度（px/s²）。 */
 const GRAVITY = 1600;
 /** 在 Ground 上滑行時的摩擦減速度（px/s²）。 */
-const FRICTION = 1800;
+const FRICTION = 4000;
+/** 飛行中的空氣阻力：水平速度每秒衰減的比例係數（1/s）。 */
+const AIR_DRAG = 1.5;
+/** 放開時游標速度只有這個比例帶給 Toss，避免輕輕一甩就飛很遠。 */
+const TOSS_TRANSFER = 0.5;
+/** 游標速度低於此值時不 Toss，直接落下（px/s）。 */
+const MIN_TOSS_SPEED = 800;
 /**
  * 各拖拽物理模式的 Toss：maxSpeed 為速度上限（px/s），
  * restitution 為撞到螢幕邊緣時保留的速度比例。
@@ -369,9 +375,11 @@ export function createPet(deps: PetDeps): Pet {
     const samples = [...(drag?.samples ?? []), { time: now, position: at }];
     const physics = settings.dragPhysics;
     const toss = physics === "off" ? undefined : TOSS[physics];
-    const velocity = toss
-      ? limitSpeed(velocityOf(recent(samples, now)), toss.maxSpeed)
-      : STILL;
+    const release = velocityOf(recent(samples, now));
+    const velocity =
+      toss && speed(release) >= MIN_TOSS_SPEED
+        ? limitSpeed(scale(release, TOSS_TRANSFER), toss.maxSpeed)
+        : STILL;
     drag = undefined;
     setVelocity(velocity);
     interact(now);
@@ -571,6 +579,7 @@ function step(
   let { x: vx, y: vy } = flight.velocity;
   let landed = false;
   if (!flight.grounded) {
+    vx *= Math.exp(-AIR_DRAG * dt);
     y += vy * dt + (GRAVITY * dt * dt) / 2;
     vy += GRAVITY * dt;
     if (y >= area.bottom) {
@@ -620,11 +629,13 @@ function speed(velocity: Point): number {
   return Math.hypot(velocity.x, velocity.y);
 }
 
+function scale(velocity: Point, ratio: number): Point {
+  return { x: velocity.x * ratio, y: velocity.y * ratio };
+}
+
 function limitSpeed(velocity: Point, max: number): Point {
   const ratio = max / speed(velocity);
-  return ratio < 1
-    ? { x: velocity.x * ratio, y: velocity.y * ratio }
-    : velocity;
+  return ratio < 1 ? scale(velocity, ratio) : velocity;
 }
 
 function distance(a: Point, b: Point): number {

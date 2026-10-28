@@ -715,7 +715,7 @@ describe("Toss", () => {
     const ground = started.snapshot.position.y;
 
     // 往左上方甩出。
-    const dropped = toss(pet, { x: 1500, y: 1000 }, { x: -800, y: -800 });
+    const dropped = toss(pet, { x: 1500, y: 1000 }, { x: -1600, y: -1600 });
     const path = run(pet, 2000, 6000);
 
     const peak = Math.min(...path.map((s) => s.position.y));
@@ -730,11 +730,24 @@ describe("Toss", () => {
     expect(rest.velocity).toEqual({ x: 0, y: 0 });
   });
 
+  it("barely moves after a small flick", () => {
+    const { pet } = startedPet();
+
+    // 在 Ground 上輕輕一甩（600 px/s）。
+    const dropped = toss(pet, { x: 1500, y: BODY.y }, { x: -600, y: 0 });
+    const rest = run(pet, 2000, 4000).at(-1)!;
+
+    expect(rest.motion).toBe("idle");
+    expect(
+      Math.abs(rest.position.x - dropped.snapshot.position.x)
+    ).toBeLessThan(20);
+  });
+
   it("caps the Toss speed and bounces off the screen's left edge", () => {
     const { pet } = startedPet();
 
-    // 貼近左緣、沿 Ground 以 4000 px/s 往左甩。
-    const dropped = toss(pet, { x: 400, y: BODY.y }, { x: -4000, y: 0 });
+    // 貼近左緣、沿 Ground 以 8000 px/s 往左甩（帶給 Toss 一半，超過上限）。
+    const dropped = toss(pet, { x: 400, y: BODY.y }, { x: -8000, y: 0 });
     expect(dropped.snapshot.velocity.x).toBeCloseTo(-2500);
 
     const path = run(pet, 2000, 4000);
@@ -770,7 +783,7 @@ describe("Drag physics setting", () => {
 
   it("lively: switching the setting raises the Toss speed cap and the bounce", () => {
     const wallToss = (pet: ReturnType<typeof createPet>) => {
-      const dropped = toss(pet, { x: 400, y: BODY.y }, { x: -4000, y: 0 });
+      const dropped = toss(pet, { x: 400, y: BODY.y }, { x: -8000, y: 0 });
       const bounced = run(pet, 2000, 4000).find((s) => s.velocity.x > 0);
       return { cap: -dropped.snapshot.velocity.x, bounce: bounced!.velocity.x };
     };
