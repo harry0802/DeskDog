@@ -231,8 +231,11 @@ describe("Line Pool", () => {
   });
 });
 
-const tick = (pet: ReturnType<typeof createPet>, now: number) =>
-  pet.tick({ now, displays: [primary] });
+const tick = (
+  pet: ReturnType<typeof createPet>,
+  now: number,
+  displays = [primary]
+) => pet.tick({ now, displays });
 
 describe("Pat", () => {
   it("keeps adding 1 Affection per extra second of petting", () => {
@@ -795,5 +798,87 @@ describe("Drag physics setting", () => {
 
     expect(lively.cap).toBeGreaterThan(standard.cap);
     expect(lively.bounce).toBeGreaterThan(standard.bounce);
+  });
+});
+
+describe("Across displays", () => {
+  const displays = [primary, secondary];
+
+  it("lands on the Ground of the display holding the pet's center after a Drop there", () => {
+    const { pet } = startedPet({}, { displays });
+
+    // 腳底相對游標為 (40, 92)：拖到左邊螢幕中央。
+    const dropped = dragAndDrop(pet, { x: -1000, y: 500 }, 2000);
+    expect(dropped.snapshot.displayId).toBe(secondary.id);
+    expect(dropped.snapshot.position).toEqual({ x: -960, y: 592 });
+
+    const rest = tick(pet, 4000, displays).snapshot;
+    expect(rest.motion).toBe("idle");
+    expect(rest.displayId).toBe(secondary.id);
+    expect(rest.position).toEqual({ x: -960, y: 1080 });
+  });
+
+  it("stays in view when dragged into a gap between displays or where no display is", () => {
+    // 右邊螢幕與主螢幕之間隔了 400px。
+    const right: Display = {
+      id: 3,
+      primary: false,
+      workArea: { x: 2960, y: 0, width: 1920, height: 1040 },
+    };
+    const spread = [secondary, primary, right];
+    const { pet } = startedPet({}, { displays: spread });
+    const inView = ({ x, y }: Point) =>
+      spread.some(
+        ({ workArea: a }) =>
+          x - 110 >= a.x &&
+          x + 110 <= a.x + a.width &&
+          y - 170 >= a.y &&
+          y <= a.y + a.height
+      );
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
+    const move = (time: number, position: Point) =>
+      pet.pointer({ type: "move", time, position, hit: "body" }).snapshot;
+
+    // 空隙正中央。
+    const gap = move(1050, { x: 2720, y: 500 });
+    expect(inView(gap.position)).toBe(true);
+    // 左邊螢幕下方（主螢幕較高，這裡沒有螢幕）。
+    const below = move(1100, { x: -1000, y: 1300 });
+    expect(below.displayId).toBe(secondary.id);
+    expect(below.position).toEqual({ x: -960, y: 1080 });
+    // 所有螢幕外。
+    expect(inView(move(1150, { x: 9999, y: -9999 }).position)).toBe(true);
+  });
+
+  it("crosses the shared edge between adjacent displays without jumping", () => {
+    const { pet } = startedPet({}, { displays });
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
+    const move = (time: number, x: number) =>
+      pet.pointer({
+        type: "move",
+        time,
+        position: { x: x - 40, y: 400 },
+        hit: "body",
+      }).snapshot;
+
+    expect(move(1050, 50)).toMatchObject({
+      displayId: primary.id,
+      position: { x: 50, y: 492 },
+    });
+    expect(move(1100, -50)).toMatchObject({
+      displayId: secondary.id,
+      position: { x: -50, y: 492 },
+    });
+
+    // 跨在邊上放開也不會被推開。
+    pet.pointer({
+      type: "up",
+      time: 1500,
+      position: { x: -90, y: 400 },
+      hit: "body",
+    });
+    const rest = tick(pet, 3500, displays).snapshot;
+    expect(rest.displayId).toBe(secondary.id);
+    expect(rest.position).toEqual({ x: -50, y: 1080 });
   });
 });

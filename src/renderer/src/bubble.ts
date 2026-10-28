@@ -84,6 +84,10 @@ export class Bubble {
     this.view.position.set(x, y);
   }
 
+  hide(): void {
+    this.view.visible = false;
+  }
+
   update(deltaMs: number): void {
     if (!this.view.visible) return;
     this.remaining -= deltaMs;

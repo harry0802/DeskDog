@@ -3,7 +3,6 @@ import { Container, Sprite } from "pixi.js";
 import {
   FAST_DRAG_SPEED,
   LANDING_DURATION,
-  type DisplayId,
   type HitRegion,
   type Mood,
   type Motion,
@@ -109,7 +108,6 @@ export class Rig {
 
   constructor(
     parts: readonly Part[],
-    private readonly displayId: DisplayId,
     private readonly bounds: Rect
   ) {
     this.view.pivot.set(FEET.x, FEET.y);
@@ -130,7 +128,6 @@ export class Rig {
   }
 
   apply(snapshot: PetSnapshot): void {
-    this.view.visible = snapshot.displayId === this.displayId;
     this.base = {
       x: snapshot.position.x - this.bounds.x,
       y: snapshot.position.y - this.bounds.y,
@@ -258,7 +255,6 @@ export class Rig {
 
   /** 游標命中的部位；point 為覆蓋層視窗座標。 */
   hitTest(point: Point): HitRegion {
-    if (!this.view.visible) return "none";
     // 游標遠離時直接判定未命中。
     if (!this.view.getBounds().containsPoint(point.x, point.y)) return "none";
     // 由前往後找第一個命中的 Part，例如耳朵疊在身體前面時算頭部。

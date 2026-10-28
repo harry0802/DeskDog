@@ -24,7 +24,7 @@ const ACTIVE_FPS = 60;
 app.ticker.maxFPS = IDLE_FPS;
 document.body.appendChild(app.canvas);
 
-const rig = new Rig(createPlaceholderParts(app.renderer), displayId, bounds);
+const rig = new Rig(createPlaceholderParts(app.renderer), bounds);
 const bubble = new Bubble(bounds);
 // 愛心從頭頂下方一點冒出，往上飄過耳朵。
 const hearts = new Hearts(() => {
@@ -46,16 +46,20 @@ const isCarried = (motion: Motion) =>
   motion === "pickedUp" || motion === "dragging";
 
 function render({ snapshot, effects }: PetOutput): void {
+  // 每個覆蓋層都畫狗狗（超出螢幕的部分自然被裁掉），跨在螢幕邊上時不會斷掉。
   rig.apply(snapshot);
+  const here = snapshot.displayId === displayId;
   app.ticker.maxFPS = snapshot.motion === "idle" ? IDLE_FPS : ACTIVE_FPS;
-  document.body.style.cursor =
-    isCarried(snapshot.motion) && rig.view.visible ? "grabbing" : "";
+  document.body.style.cursor = isCarried(snapshot.motion) ? "grabbing" : "";
   // 拖拽中 Bubble 跟著頭頂走。
   if (bubble.view.visible) bubble.follow(rig.headTop());
-  debugPanel?.show(snapshot, rig.footprint(), rig.view.visible);
-  hearts.setActive(snapshot.afterglow && rig.view.visible);
-  // 只有狗狗所在螢幕的覆蓋層演出效果。
-  if (!rig.view.visible) return;
+  debugPanel?.show(snapshot, rig.footprint(), here);
+  hearts.setActive(snapshot.afterglow && here);
+  // 只有狗狗所在螢幕的覆蓋層演出效果；狗狗被抱走時收起這裡的 Bubble。
+  if (!here) {
+    bubble.hide();
+    return;
+  }
   for (const effect of effects) {
     if (effect.type === "say") {
       bubble.show(effect.line, rig.headTop(), snapshot.facing);

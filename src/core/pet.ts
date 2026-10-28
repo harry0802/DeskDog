@@ -336,17 +336,20 @@ export function createPet(deps: PetDeps): Pet {
     return output([say("pickedUp")]);
   }
 
-  /** 拖拽中讓腳底跟著游標，限制在目前螢幕的工作區域內。 */
+  /** 拖拽中讓腳底跟著游標，可跨螢幕，但限制在某個螢幕的工作區域內。 */
   function moveTo(at: Point): void {
     if (!drag) return;
     const pet = current();
-    const area = feetArea(displayOf(displays, pet.displayId).workArea);
-    const position = {
-      x: clamp(at.x + drag.offset.x, area.left, area.right),
-      y: clamp(at.y + drag.offset.y, area.top, area.bottom),
-    };
-    if (position.x !== pet.position.x || position.y !== pet.position.y) {
-      snapshot = { ...pet, position };
+    const { display, position } = nearestPlace(displays, {
+      x: at.x + drag.offset.x,
+      y: at.y + drag.offset.y,
+    });
+    if (
+      display.id !== pet.displayId ||
+      position.x !== pet.position.x ||
+      position.y !== pet.position.y
+    ) {
+      snapshot = { ...pet, displayId: display.id, position };
     }
   }
 
@@ -401,7 +404,7 @@ export function createPet(deps: PetDeps): Pet {
   /** 依物理推進 Toss、下落與滑行；落地演出結束時回傳 landing Line。 */
   function settle(now: number): PetEffect[] {
     if (flight) {
-      const area = feetArea(displayOf(displays, current().displayId).workArea);
+      const area = feetArea(displayOf(displays, current().displayId), displays);
       while (flight.time < now) {
         const ms = Math.min(PHYSICS_STEP, now - flight.time);
         flight.time += ms;
@@ -538,7 +541,10 @@ function linePool({ mood, affection }: PetSnapshot): LinePool {
   return mood === "normal" && affection < COLD_AFFECTION ? "coldNormal" : mood;
 }
 
-/** 腳底可以到的範圍：整隻狗留在工作區域內。 */
+/**
+ * 腳底可以到的範圍：整隻狗留在工作區域內；
+ * 左右緣與相鄰螢幕相接時放寬到中心點可以碰到邊緣，跨螢幕時不會跳開。
+ */
 interface FeetArea {
   readonly left: number;
   readonly right: number;
@@ -546,14 +552,46 @@ interface FeetArea {
   readonly bottom: number;
 }
 
-function feetArea(workArea: Rect): FeetArea {
+function feetArea(display: Display, displays: readonly Display[]): FeetArea {
+  const { workArea } = display;
   const halfWidth = PET_SIZE.width / 2;
+  const right = workArea.x + workArea.width;
+  /** 另一個螢幕的 edge 落在 x 上且上下範圍重疊：兩者左右相接。 */
+  const neighbor = (edge: (other: Rect) => number, x: number) =>
+    displays.some(
+      ({ id, workArea: a }) =>
+        id !== display.id &&
+        edge(a) === x &&
+        a.y < ground(workArea) &&
+        workArea.y < ground(a)
+    );
   return {
-    left: workArea.x + halfWidth,
-    right: workArea.x + workArea.width - halfWidth,
+    left:
+      workArea.x + (neighbor((a) => a.x + a.width, workArea.x) ? 0 : halfWidth),
+    right: right - (neighbor((a) => a.x, right) ? 0 : halfWidth),
     top: workArea.y + PET_SIZE.height,
     bottom: ground(workArea),
   };
+}
+
+/** 離 feet 最近、狗狗可以待的位置，以及它所在的螢幕。 */
+function nearestPlace(
+  displays: readonly Display[],
+  feet: Point
+): { display: Display; position: Point } {
+  const places = displays.map((display) => {
+    const area = feetArea(display, displays);
+    const position = {
+      x: clamp(feet.x, area.left, area.right),
+      y: clamp(feet.y, area.top, area.bottom),
+    };
+    return { display, position };
+  });
+  const [nearest] = places.sort(
+    (a, b) => distance(a.position, feet) - distance(b.position, feet)
+  );
+  if (!nearest) throw new Error("No displays");
+  return nearest;
 }
 
 interface Toss {
