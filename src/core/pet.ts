@@ -178,6 +178,15 @@ const COLD_AFFECTION = 30;
 /** sulky 時在這段時間內累積 MAKE_UP_INTERACTIONS 次 Interaction 就 Make-up（ms）。 */
 const MAKE_UP_WINDOW = 30_000;
 const MAKE_UP_INTERACTIONS = 3;
+/** 連點判定：這段時間內 CLICK_BURST 次 Click 會惹毛狗狗（ms）。 */
+const CLICK_BURST_WINDOW = 1500;
+const CLICK_BURST = 5;
+const BURST_AFFECTION = -1;
+/** 連續拖拽這麼久說 draggedTooLong；再久就惹毛狗狗（ms）。 */
+const DRAG_COMPLAINT = 8000;
+const DRAG_LIMIT = 15_000;
+/** annoyed 持續的時間（ms）。 */
+const ANNOYED_COOLDOWN = 10_000;
 /** 按下後移動超過此距離就不再是 Click。 */
 const DRAG_THRESHOLD = 6;
 /** 在頭上按住達此時間即為 Pat；任何部位按住達此時間放開都不是 Click（ms）。 */
@@ -256,6 +265,12 @@ export function createPet(deps: PetDeps): Pet {
         /** 這次 Pickup 曾被快速甩動。 */
         shaken: boolean;
         fastLineAt: number;
+        /** 已說過 draggedTooLong。 */
+        complained: boolean;
+        /** 拖太久而惹毛了狗狗：這次 Drop 不加 Affection。 */
+        exhausted: boolean;
+        /** 抱起時還在生氣：這次 Drop 不加 Affection。 */
+        protested: boolean;
       }
     | undefined;
   /** Drop 後到停下為止：飛行、下落或在 Ground 上滑行。time 為已模擬到的時間。 */
@@ -273,6 +288,10 @@ export function createPet(deps: PetDeps): Pet {
   let sulking = false;
   /** sulky 期間最近的 Interaction 時間，用來判斷 Make-up。 */
   let coaxes: number[] = [];
+  /** annoyed 冷卻結束的時間；沒在冷卻中為 undefined。 */
+  let annoyedUntil: number | undefined;
+  /** 最近的 Click 時間，用來判斷連點。 */
+  let clickTimes: number[] = [];
   /** 不是當下動作直接產生、要在下次輸出時一併送出的效果。 */
   let pending: PetEffect[] = [];
   /** 下次輸出時要求存檔。 */
@@ -325,7 +344,8 @@ export function createPet(deps: PetDeps): Pet {
     // Afterglow：Pat 之後持續按住的期間，放開即結束。
     const afterglow = press?.patted ?? false;
     if (neglect > SULKY_NEGLECT) sulking = true;
-    const mood = deriveMood(affection, afterglow, neglect, sulking);
+    const annoyed = annoyedUntil !== undefined && lastTick < annoyedUntil;
+    const mood = deriveMood(affection, afterglow, neglect, sulking, annoyed);
     if (
       affection !== pet.affection ||
       mood !== pet.mood ||
@@ -359,6 +379,16 @@ export function createPet(deps: PetDeps): Pet {
   function click(now: number): PetOutput {
     const wasSulking = sulking;
     interact(now);
+    clickTimes = [
+      ...clickTimes.filter((t) => now - t <= CLICK_BURST_WINDOW),
+      now,
+    ];
+    if (clickTimes.length >= CLICK_BURST) {
+      clickTimes = [];
+      annoyedUntil = now + ANNOYED_COOLDOWN;
+      update(BURST_AFFECTION);
+      return output([say("annoyed")]);
+    }
     // Make-up 的 makeUp Line 已排入 pending。
     if (wasSulking) return output(sulking ? [say("sulkyCoaxing")] : []);
     return output([say(linePool(current()))]);
@@ -413,10 +443,13 @@ export function createPet(deps: PetDeps): Pet {
       fast: false,
       shaken: false,
       fastLineAt: -Infinity,
+      complained: false,
+      exhausted: false,
+      protested: current().mood === "annoyed",
     };
     moveTo(at);
     setMotion("pickedUp");
-    return output([say("pickedUp")]);
+    return output([say(drag.protested ? "protestPickup" : "pickedUp")]);
   }
 
   /** 拖拽中讓腳底跟著游標，可跨螢幕，但限制在某個螢幕的工作區域內。 */
@@ -444,20 +477,39 @@ export function createPet(deps: PetDeps): Pet {
     drag.samples = recent(drag.samples, now);
     const velocity = velocityOf(drag.samples);
     setVelocity(velocity);
+    const effects = complain(now);
     const fast = speed(velocity) > FAST_DRAG_SPEED;
     const started = fast && !drag.fast;
     drag.fast = fast;
-    if (!started) return [];
+    if (!started) return effects;
     drag.shaken = true;
-    if (now - drag.fastLineAt < FAST_LINE_COOLDOWN) return [];
+    if (now - drag.fastLineAt < FAST_LINE_COOLDOWN) return effects;
     drag.fastLineAt = now;
-    return [say("fastDragging")];
+    return [...effects, say("fastDragging")];
+  }
+
+  /** 拖太久：8 秒說 draggedTooLong，15 秒惹毛狗狗。 */
+  function complain(now: number): PetEffect[] {
+    if (!drag) return [];
+    const held = now - drag.since;
+    const effects: PetEffect[] = [];
+    if (!drag.complained && held >= DRAG_COMPLAINT) {
+      drag.complained = true;
+      effects.push(say("draggedTooLong"));
+    }
+    if (!drag.exhausted && held >= DRAG_LIMIT) {
+      drag.exhausted = true;
+      annoyedUntil = now + ANNOYED_COOLDOWN;
+      update();
+    }
+    return effects;
   }
 
   /** at 為放開時的游標位置；游標仍有速度時 Toss。 */
   function drop(now: number, at: Point): PetOutput {
     // 被快速甩動不加也不扣。
-    const safe = !drag?.shaken;
+    complain(now);
+    const safe = !drag?.shaken && !drag?.exhausted && !drag?.protested;
     const samples = [...(drag?.samples ?? []), { time: now, position: at }];
     const physics = settings.dragPhysics;
     const toss = physics === "off" ? undefined : TOSS[physics];
@@ -638,13 +690,15 @@ function readSettings(saved: unknown): Settings {
   };
 }
 
-// 之後的 issue 會加入 annoyed、sleepy。
+// 之後的 issue 會加入 sleepy。
 function deriveMood(
   affection: number,
   afterglow: boolean,
   neglect: number,
-  sulking: boolean
+  sulking: boolean,
+  annoyed: boolean
 ): Mood {
+  if (annoyed) return "annoyed";
   if (sulking) return "sulky";
   if (neglect > LONELY_NEGLECT) return "lonely";
   return afterglow || affection >= HAPPY_AFFECTION ? "happy" : "normal";
@@ -861,7 +915,7 @@ function restSnapshot(
   sulking: boolean
 ): PetSnapshot {
   return {
-    mood: deriveMood(affection, false, neglect, sulking),
+    mood: deriveMood(affection, false, neglect, sulking, false),
     motion: "idle",
     affection,
     afterglow: false,

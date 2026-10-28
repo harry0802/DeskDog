@@ -587,6 +587,121 @@ describe("Make-up", () => {
   });
 });
 
+describe("Annoyed from rapid Clicks", () => {
+  /** 從 start 起每 300ms Click 一次。 */
+  function clicks(pet: ReturnType<typeof createPet>, count: number, first = 0) {
+    let out!: PetOutput;
+    for (let i = first; i < first + count; i++) {
+      const time = 1000 + 300 * i;
+      pet.pointer({ type: "down", time, position: BODY, hit: "body" });
+      out = pet.pointer({
+        type: "up",
+        time: time + 50,
+        position: BODY,
+        hit: "body",
+      });
+    }
+    return out;
+  }
+
+  it("5 Clicks within 1.5 seconds cost 1 Affection and turn annoyed for 10 seconds", () => {
+    const { pet } = startedPet({}, { saved: { affection: 60 } });
+
+    const four = clicks(pet, 4);
+    expect(four.snapshot.mood).not.toBe("annoyed");
+    const out = clicks(pet, 1, 4);
+
+    expect(out.snapshot.mood).toBe("annoyed");
+    expect(out.snapshot.affection).toBe(59);
+    expect(said(out)).toEqual(["annoyed-1"]);
+    expect(tick(pet, 2250 + 9_999).snapshot.mood).toBe("annoyed");
+    expect(tick(pet, 2250 + 10_000).snapshot.mood).toBe("normal");
+  });
+});
+
+describe("Dragged too long", () => {
+  /** 在 1050 抱起，之後游標不動。 */
+  function carried() {
+    const { pet, started } = startedPet();
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
+    pet.pointer({
+      type: "move",
+      time: 1050,
+      position: { x: BODY.x - 10, y: BODY.y },
+      hit: "body",
+    });
+    return { pet, started };
+  }
+  const HELD = { x: BODY.x - 10, y: BODY.y };
+
+  it("says draggedTooLong once after 8 seconds of carrying", () => {
+    const { pet } = carried();
+
+    expect(said(tick(pet, 1050 + 7_999))).toEqual([]);
+    expect(said(tick(pet, 1050 + 8_000))).toEqual(["draggedTooLong-1"]);
+    expect(said(tick(pet, 1050 + 9_000))).toEqual([]);
+  });
+
+  it("turns annoyed after 15 seconds, and that Drop adds no Affection", () => {
+    const { pet, started } = carried();
+    tick(pet, 1050 + 14_999);
+
+    const annoyed = tick(pet, 1050 + 15_000);
+    expect(annoyed.snapshot.mood).toBe("annoyed");
+
+    const out = pet.pointer({
+      type: "up",
+      time: 1050 + 16_000,
+      position: HELD,
+      hit: "body",
+    });
+    expect(out.snapshot.affection).toBe(started.snapshot.affection);
+    expect(tick(pet, 1050 + 25_000).snapshot.mood).toBe("normal");
+  });
+});
+
+describe("Annoyed Pickup", () => {
+  /** 連點 5 次惹毛狗狗，最後一次在 2200+50。 */
+  function annoyedPet(saved: Record<string, unknown> = {}) {
+    const { pet, started } = startedPet({}, { saved });
+    for (let i = 0; i < 5; i++) {
+      const time = 1000 + 300 * i;
+      pet.pointer({ type: "down", time, position: BODY, hit: "body" });
+      pet.pointer({ type: "up", time: time + 50, position: BODY, hit: "body" });
+    }
+    return { pet, started };
+  }
+
+  it("can still be picked up, but protests and the Drop adds no Affection", () => {
+    const { pet } = annoyedPet({ affection: 60 });
+    pet.pointer({ type: "down", time: 3000, position: BODY, hit: "body" });
+
+    const lifted = pet.pointer({
+      type: "move",
+      time: 3050,
+      position: { x: BODY.x - 10, y: BODY.y },
+      hit: "body",
+    });
+    expect(lifted.snapshot.motion).toBe("pickedUp");
+    expect(said(lifted)).toEqual(["protestPickup-1"]);
+
+    const dropped = pet.pointer({
+      type: "up",
+      time: 4000,
+      position: { x: BODY.x - 10, y: BODY.y },
+      hit: "body",
+    });
+    expect(dropped.snapshot.affection).toBe(59);
+  });
+
+  it("outranks happy", () => {
+    const { pet } = annoyedPet({ affection: 90 });
+
+    expect(tick(pet, 2300).snapshot.mood).toBe("annoyed");
+    expect(tick(pet, 2250 + 10_000).snapshot.mood).toBe("happy");
+  });
+});
+
 describe("Pickup", () => {
   it("lifts the pet after moving 7 px on the body and says a pickedUp Line", () => {
     const { pet } = startedPet();
