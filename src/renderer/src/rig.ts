@@ -56,9 +56,15 @@ const DROOPING_EARS = 0.7;
 const LONELY_WAG_PERIOD = 2400;
 const LONELY_WAG_ANGLE = 0.12;
 
+/** annoyed：左右腿輪流抬起跺地，身體跟著微微左右晃。 */
+const STOMP_PERIOD = 360;
+const STOMP_LIFT = 14;
+const STOMP_SWAY = 4;
+
 /** 各 Mood 顯示的表情 Part；未列出的眼睛、嘴巴 Part 隱藏。 */
 const EXPRESSIONS: Partial<Record<Mood, readonly string[]>> = {
   happy: ["eyes_happy", "mouth_happy"],
+  annoyed: ["eyes_angry", "mouth_angry"],
   sulky: ["eyes_angry", "mouth_angry"],
 };
 const DEFAULT_EXPRESSION = ["eyes_open", "mouth_idle"];
@@ -189,7 +195,10 @@ export class Rig {
         : 0;
     // 拖拽中不跳。
     const hop = carried ? 0 : Math.max(greetingHop, happyHop);
-    this.view.position.set(this.base.x, this.base.y - hop - this.lift);
+    const stomping = this.mood === "annoyed" && !carried;
+    const stompPhase = (this.elapsed / STOMP_PERIOD) * Math.PI * 2;
+    const sway = stomping ? Math.sin(stompPhase) * STOMP_SWAY : 0;
+    this.view.position.set(this.base.x + sway, this.base.y - hop - this.lift);
 
     // 腿保持鉛直：在翻轉的 Container 內，局部旋轉方向跟著翻轉。
     const legAngle =
@@ -197,6 +206,13 @@ export class Rig {
     for (const leg of this.legs) {
       leg.rotation = legAngle;
       leg.scale.y = 1 + (HANGING_LEGS - 1) * (this.lift / LIFT_HEIGHT);
+    }
+    // 左腿與右腿反相：輪流抬起再踩下。
+    for (const { part, sprite } of this.parts) {
+      if (!isLeg(part.name)) continue;
+      const side = part.name.endsWith("L") ? 1 : -1;
+      const raise = stomping ? Math.max(0, Math.sin(stompPhase) * side) : 0;
+      sprite.position.y = part.pivot.y - raise * STOMP_LIFT;
     }
 
     // 往前移動時耳朵與尾巴往後甩（局部座標中逆時針）。
