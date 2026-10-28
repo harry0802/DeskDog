@@ -16,9 +16,9 @@ Otherwise read the parts of `GLOSSARY.md`, `docs/adr/`, and `docs/spec.md` that 
 
 ## 2. Implement
 
-Pet core behaviour goes test-first (see "Testing Decisions" in `docs/spec.md`): write the Vitest test, watch it go **red** for the right reason, then write the code that turns it **green**. One behaviour at a time.
+Pet core (the only test seam; see "Testing Decisions" in `docs/spec.md`): Red Green Refactor, one test per cycle. The first test is a tracer bullet through one behaviour. Write that single test, run it, see it go **red** for the right reason, write the least code that turns it **green**, and only then write the next test. Refactor once, after the last behaviour is green, keeping the tests green throughout.
 
-Code outside the Pet core (Electron shell, Pixi rendering, settings window) has no test seam; the type check is its loop. Keep logic out of those layers and in the Pet core, where a test can reach it.
+Everything else (Electron shell, Pixi rendering, settings window): implement directly; the type check is its loop. Keep logic in the Pet core, where a test can reach it.
 
 ## 3. Close the feedback loops
 
