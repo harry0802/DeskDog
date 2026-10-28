@@ -60,6 +60,11 @@ const DEFS: readonly PartDef[] = [
     pivot: { x: 110, y: 108 },
     draw: (g) => g.roundRect(38, 80, 144, 56, 28).fill(FUR),
   },
+  {
+    name: "body_lying",
+    pivot: { x: 110, y: 145 },
+    draw: (g) => g.roundRect(30, 122, 160, 48, 24).fill(FUR),
+  },
   { name: "leg_BR", pivot: { x: 83, y: 112 }, draw: leg(75, FUR) },
   { name: "leg_FR", pivot: { x: 168, y: 112 }, draw: leg(160, FUR) },
   {
@@ -94,6 +99,17 @@ const DEFS: readonly PartDef[] = [
         .stroke({ width: 2.5, color: INK, cap: "round" }),
   },
   {
+    name: "eyes_angry",
+    pivot: { x: 190, y: 62 },
+    draw: (g) =>
+      g
+        .circle(190, 64, 3.5)
+        .fill(INK)
+        .moveTo(183, 54)
+        .lineTo(197, 59)
+        .stroke({ width: 2.5, color: INK, cap: "round" }),
+  },
+  {
     name: "mouth_idle",
     pivot: { x: 206, y: 91 },
     draw: (g) =>
@@ -113,6 +129,15 @@ const DEFS: readonly PartDef[] = [
         .fill(INK)
         .ellipse(205, 96, 4, 3)
         .fill(0xe46a7a),
+  },
+  {
+    name: "mouth_angry",
+    pivot: { x: 206, y: 91 },
+    draw: (g) =>
+      g
+        .moveTo(198, 93)
+        .quadraticCurveTo(205, 87, 212, 92)
+        .stroke({ width: 2, color: INK, cap: "round" }),
   },
 ];
 

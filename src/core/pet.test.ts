@@ -461,6 +461,66 @@ describe("Affection Decay", () => {
   });
 });
 
+describe("Neglect", () => {
+  it("turns lonely after 10 minutes of Neglect and sulky after 45", () => {
+    const { pet } = startedPet({}, { now: 0, saved: { affection: 60 } });
+
+    expect(tick(pet, 10 * MINUTE).snapshot.mood).toBe("normal");
+    expect(tick(pet, 10 * MINUTE + 1).snapshot.mood).toBe("lonely");
+    expect(tick(pet, 45 * MINUTE).snapshot.mood).toBe("lonely");
+    expect(tick(pet, 45 * MINUTE + 1).snapshot.mood).toBe("sulky");
+  });
+
+  it.each([
+    { interaction: "Click", act: click },
+    { interaction: "Pat", act: pat },
+    {
+      interaction: "Pickup",
+      act: (pet: ReturnType<typeof createPet>) => {
+        const at = 20 * MINUTE;
+        const to = { x: BODY.x - 10, y: BODY.y };
+        pet.pointer({ type: "down", time: at, position: BODY, hit: "body" });
+        pet.pointer({ type: "move", time: at + 50, position: to, hit: "body" });
+      },
+    },
+  ])("restarts the Neglect count after a $interaction", ({ act }) => {
+    const { pet } = startedPet({}, { now: 0, saved: { affection: 60 } });
+    // 一直 tick 不算 Interaction。
+    for (let now = MINUTE; now <= 20 * MINUTE; now += MINUTE) tick(pet, now);
+    expect(tick(pet, 20 * MINUTE).snapshot.mood).toBe("lonely");
+    clock = 20 * MINUTE;
+
+    act(pet);
+
+    const after = tick(pet, 20 * MINUTE + 10_000).snapshot;
+    expect(after.mood).toBe("normal");
+  });
+
+  it("continues from the saved Neglect after a restart, not counting the time the App was closed", () => {
+    // 存檔時已被冷落 9 分鐘；隔天（App 關閉的時間很長）才重新開啟。
+    const tomorrow = 24 * 60 * MINUTE;
+    const { pet, started } = startedPet(
+      {},
+      { now: tomorrow, saved: { affection: 60, neglect: 9 * MINUTE } }
+    );
+
+    expect(started.snapshot.mood).toBe("normal");
+    expect(tick(pet, tomorrow + MINUTE).snapshot.mood).toBe("normal");
+    expect(tick(pet, tomorrow + MINUTE + 1).snapshot.mood).toBe("lonely");
+    expect(pet.stop({ now: tomorrow + 2 * MINUTE }).effects).toContainEqual(
+      expect.objectContaining({
+        petState: expect.objectContaining({ neglect: 11 * MINUTE }),
+      })
+    );
+  });
+
+  it("starts sulky when the saved Neglect is already over 45 minutes", () => {
+    const { started } = startedPet({}, { saved: { neglect: 50 * MINUTE } });
+
+    expect(started.snapshot.mood).toBe("sulky");
+  });
+});
+
 describe("Pickup", () => {
   it("lifts the pet after moving 7 px on the body and says a pickedUp Line", () => {
     const { pet } = startedPet();
@@ -946,6 +1006,7 @@ describe("Saved state", () => {
           displayId: primary.id,
           position: started.snapshot.position,
           neglect: 0,
+          neglectSinceDecay: 0,
         },
         settings: { name: "小柴", dragPhysics: "standard" },
       },
@@ -972,12 +1033,12 @@ describe("Saved state", () => {
   it("asks to save when the Mood changes", () => {
     const { pet } = startedPet({}, { now: 0, saved: { affection: 75 } });
 
-    expect(saves(tick(pet, 59 * 60_000))).toEqual([]);
-    const out = tick(pet, 60 * 60_000);
+    expect(saves(tick(pet, 10 * 60_000))).toEqual([]);
+    const out = tick(pet, 10 * 60_000 + 1);
 
-    expect(out.snapshot.mood).toBe("normal");
+    expect(out.snapshot.mood).toBe("lonely");
     expect(saves(out)).toHaveLength(1);
-    expect(saves(tick(pet, 61 * 60_000))).toEqual([]);
+    expect(saves(tick(pet, 11 * 60_000))).toEqual([]);
   });
 
   it("asks to save the new settings when they change", () => {
@@ -994,7 +1055,7 @@ describe("Saved state", () => {
   it("keeps counting the saved Neglect toward the next Affection Decay", () => {
     const { pet } = startedPet(
       {},
-      { now: 0, saved: { affection: 60, neglect: 59 * 60_000 } }
+      { now: 0, saved: { affection: 60, neglectSinceDecay: 59 * 60_000 } }
     );
 
     expect(tick(pet, 60_000).snapshot.affection).toBe(59);
@@ -1007,7 +1068,11 @@ describe("Saved state", () => {
 
     expect(saves(out)).toHaveLength(1);
     expect(saves(out)[0]).toMatchObject({
-      petState: { affection: 60, neglect: 30 * 60_000 },
+      petState: {
+        affection: 60,
+        neglect: 30 * 60_000,
+        neglectSinceDecay: 30 * 60_000,
+      },
     });
   });
 });

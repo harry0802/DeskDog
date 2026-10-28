@@ -39,8 +39,10 @@ export interface SavedPetState {
   readonly displayId: DisplayId;
   /** 腳底中心點；讀檔時放回 Ground。 */
   readonly position: Point;
-  /** 上次扣 Affection 後累積的 Neglect（ms）。 */
+  /** 距上一次 Interaction 的 Neglect（ms）。 */
   readonly neglect: number;
+  /** 上次扣 Affection 後累積的 Neglect（ms）。 */
+  readonly neglectSinceDecay: number;
 }
 
 export interface Settings {
@@ -166,6 +168,9 @@ const SAFE_DROP_AFFECTION = 1;
 /** Pat 之後繼續撫摸，每隔這麼久再 +1（ms）。 */
 const STROKE_INTERVAL = 1000;
 const HAPPY_AFFECTION = 75;
+/** Neglect 超過此值為 lonely、sulky（ms）。 */
+const LONELY_NEGLECT = 10 * 60_000;
+const SULKY_NEGLECT = 45 * 60_000;
 /** 低於此值時 normal 改用 coldNormal Line Pool。 */
 const COLD_AFFECTION = 30;
 /** 按下後移動超過此距離就不再是 Click。 */
@@ -255,6 +260,8 @@ export function createPet(deps: PetDeps): Pet {
   let displays: readonly Display[] = [];
   let settings = DEFAULT_SETTINGS;
   let lastTick = 0;
+  /** 距上一次 Interaction 的時間，只計 App 執行中（ms）。 */
+  let neglect = 0;
   /** 上次扣 Affection 後累積的 Neglect（ms）。 */
   let neglectSinceDecay = 0;
   /** 下次輸出時要求存檔。 */
@@ -284,7 +291,8 @@ export function createPet(deps: PetDeps): Pet {
       affection,
       displayId,
       position,
-      neglect: neglectSinceDecay,
+      neglect,
+      neglectSinceDecay,
     };
     return { type: "save", petState, settings };
   }
@@ -300,7 +308,7 @@ export function createPet(deps: PetDeps): Pet {
     const affection = clampAffection(pet.affection + affectionDelta);
     // Afterglow：Pat 之後持續按住的期間，放開即結束。
     const afterglow = press?.patted ?? false;
-    const mood = deriveMood(affection, afterglow);
+    const mood = deriveMood(affection, afterglow, neglect);
     if (
       affection !== pet.affection ||
       mood !== pet.mood ||
@@ -311,10 +319,12 @@ export function createPet(deps: PetDeps): Pet {
     return current();
   }
 
-  /** Interaction 重置 Neglect：衰減重新計時。 */
+  /** Interaction 重置 Neglect：衰減重新計時，lonely／sulky 隨之結束。 */
   function interact(now: number): void {
     decay(now);
+    neglect = 0;
     neglectSinceDecay = 0;
+    update();
   }
 
   // 只有 Pat 會增加 Affection；Click 只說一句話。
@@ -327,6 +337,8 @@ export function createPet(deps: PetDeps): Pet {
   function decay(now: number): void {
     let remaining = now - lastTick;
     lastTick = now;
+    neglect += remaining;
+    update();
     while (remaining > 0 && current().affection > 0) {
       const interval = decayInterval(current().affection);
       const untilDecay = interval - neglectSinceDecay;
@@ -500,10 +512,12 @@ export function createPet(deps: PetDeps): Pet {
       const saved = fields(input.saved);
       displays = input.displays;
       lastTick = input.now;
-      neglectSinceDecay = Math.max(0, numberOr(saved["neglect"], 0));
+      neglect = Math.max(0, numberOr(saved["neglect"], 0));
+      neglectSinceDecay = Math.max(0, numberOr(saved["neglectSinceDecay"], 0));
       snapshot = restSnapshot(
         savedPlace(input.displays, saved) ?? homePlace(input.displays),
-        clampAffection(numberOr(saved["affection"], DEFAULT_AFFECTION))
+        clampAffection(numberOr(saved["affection"], DEFAULT_AFFECTION)),
+        neglect
       );
       savedMood = current().mood;
       return output([
@@ -592,7 +606,13 @@ function readSettings(saved: unknown): Settings {
 }
 
 // 之後的 issue 會加入 annoyed、sleepy、sulky、lonely。
-function deriveMood(affection: number, afterglow: boolean): Mood {
+function deriveMood(
+  affection: number,
+  afterglow: boolean,
+  neglect: number
+): Mood {
+  if (neglect > SULKY_NEGLECT) return "sulky";
+  if (neglect > LONELY_NEGLECT) return "lonely";
   return afterglow || affection >= HAPPY_AFFECTION ? "happy" : "normal";
 }
 
@@ -802,10 +822,11 @@ function savedPlace(
 
 function restSnapshot(
   { display, position }: Place,
-  affection: number
+  affection: number,
+  neglect: number
 ): PetSnapshot {
   return {
-    mood: deriveMood(affection, false),
+    mood: deriveMood(affection, false, neglect),
     motion: "idle",
     affection,
     afterglow: false,

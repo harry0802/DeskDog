@@ -50,14 +50,23 @@ const FALL_TILT = 0.15;
 const SQUASH_X = 1.2;
 const SQUASH_Y = 0.75;
 
+/** lonely：待機時趴下，頭與尾巴跟著放低；耳朵往後垂，尾巴慢慢擺。 */
+const LYING_DROP = 40;
+const DROOPING_EARS = 0.7;
+const LONELY_WAG_PERIOD = 2400;
+const LONELY_WAG_ANGLE = 0.12;
+
 /** 各 Mood 顯示的表情 Part；未列出的眼睛、嘴巴 Part 隱藏。 */
 const EXPRESSIONS: Partial<Record<Mood, readonly string[]>> = {
   happy: ["eyes_happy", "mouth_happy"],
+  sulky: ["eyes_angry", "mouth_angry"],
 };
 const DEFAULT_EXPRESSION = ["eyes_open", "mouth_idle"];
 const isExpression = (name: string) =>
   name.startsWith("eyes_") || name.startsWith("mouth_");
 const isLeg = (name: string) => name.startsWith("leg_");
+/** 趴下時跟著放低的 Part。 */
+const isLowered = (name: string) => isHeadPart(name) || name === "tail";
 const isEar = (name: string) => name.startsWith("ear_");
 const isCarried = (motion: Motion) =>
   motion === "pickedUp" || motion === "dragging";
@@ -96,6 +105,7 @@ export class Rig {
   /** 1 為面向右（佔位 Part 的方向），-1 為面向左。 */
   private facing = -1;
   private mood: Mood = "normal";
+  private lying = false;
   private motion: Motion = "idle";
   private velocity: Point = { x: 0, y: 0 };
   private elapsed = 0;
@@ -125,6 +135,7 @@ export class Rig {
     this.legs = sprites(isLeg);
     this.ears = sprites(isEar);
     this.showExpression();
+    this.showPose();
   }
 
   apply(snapshot: PetSnapshot): void {
@@ -133,17 +144,20 @@ export class Rig {
       y: snapshot.position.y - this.bounds.y,
     };
     this.view.position.set(this.base.x, this.base.y);
-    // 佔位 Part 面向右；面向左時水平翻轉。
-    this.facing = snapshot.facing === "left" ? -1 : 1;
+    // 佔位 Part 面向右；面向左時水平翻轉。sulky 時背對使用者：轉向另一邊。
+    const away = snapshot.mood === "sulky" ? -1 : 1;
+    this.facing = (snapshot.facing === "left" ? -1 : 1) * away;
     this.velocity = snapshot.velocity;
     if (snapshot.motion !== this.motion) {
       this.motion = snapshot.motion;
       this.motionElapsed = 0;
       this.showExpression();
+      this.showPose();
     }
     if (snapshot.mood !== this.mood) {
       this.mood = snapshot.mood;
       this.showExpression();
+      this.showPose();
     }
   }
 
@@ -189,8 +203,9 @@ export class Rig {
     const forward = Math.sign(this.velocity.x) * this.facing;
     const fling = -forward * FLING_ANGLE * this.stretch;
     const surprised = this.motion === "pickedUp";
+    const droop = this.mood === "lonely" ? -DROOPING_EARS : 0;
     for (const ear of this.ears) {
-      ear.rotation = fling;
+      ear.rotation = fling + droop;
       ear.scale.y = surprised ? PERKED_EARS : 1;
     }
     this.eyes?.scale.set(surprised ? SURPRISED_EYES : 1);
@@ -199,7 +214,10 @@ export class Rig {
       const wag = happy
         ? Math.sin((this.elapsed / HAPPY_WAG_PERIOD) * Math.PI * 2) *
           HAPPY_WAG_ANGLE
-        : 0;
+        : this.mood === "lonely"
+          ? Math.sin((this.elapsed / LONELY_WAG_PERIOD) * Math.PI * 2) *
+            LONELY_WAG_ANGLE
+          : 0;
       this.tail.rotation = wag + fling;
     }
   }
@@ -245,11 +263,11 @@ export class Rig {
     };
   }
 
-  /** 頭頂位置（不含跳躍），覆蓋層視窗座標；Bubble 的錨點。 */
+  /** 頭頂位置（不含跳躍，趴下時跟著放低），覆蓋層視窗座標；Bubble 的錨點。 */
   headTop(): Point {
     return {
       x: this.base.x + (HEAD_TOP.x - FEET.x) * this.facing,
-      y: this.base.y + (HEAD_TOP.y - FEET.y),
+      y: this.base.y + (HEAD_TOP.y - FEET.y) + (this.lying ? LYING_DROP : 0),
     };
   }
 
@@ -276,6 +294,20 @@ export class Rig {
     });
     if (!hit) return "none";
     return isHeadPart(hit.part.name) ? "head" : "body";
+  }
+
+  /** lonely 待機時趴下：換成趴姿身體、收起腿，頭與尾巴放低。 */
+  private showPose(): void {
+    const lying = this.mood === "lonely" && this.motion === "idle";
+    this.lying = lying;
+    for (const { part, sprite } of this.parts) {
+      if (part.name === "body") sprite.visible = !lying;
+      if (part.name === "body_lying") sprite.visible = lying;
+      if (isLeg(part.name)) sprite.visible = !lying;
+      if (isLowered(part.name)) {
+        sprite.position.y = part.pivot.y + (lying ? LYING_DROP : 0);
+      }
+    }
   }
 
   private showExpression(): void {
