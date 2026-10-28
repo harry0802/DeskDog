@@ -1,15 +1,10 @@
 {
+  // Pet 核心：lib 不含 DOM、types 不含 node，確保核心是純邏輯。
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
     "lib": ["ES2022"],
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "isolatedModules": true,
-    "verbatimModuleSyntax": true,
-    "skipLibCheck": true,
-    "noEmit": true
+    "types": []
   },
-  "include": ["src", "vitest.config.ts"]
+  "include": ["src/core"],
+  "exclude": ["src/**/*.test.ts"]
 }
