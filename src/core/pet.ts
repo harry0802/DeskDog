@@ -75,6 +75,8 @@ export interface TickInput {
   readonly typing?: boolean;
   /** 本地時刻，0 ≤ hour < 24（可含小數，例如 23.5 為 23:30）；沒給視為白天。 */
   readonly hour?: number;
+  /** 前景程式正在全螢幕（遊戲、影片、簡報）；沒給視為沒有。 */
+  readonly fullscreen?: boolean;
 }
 
 export type HitRegion = "head" | "body" | "none";
@@ -140,6 +142,10 @@ export interface PetSnapshot {
   /** 拖拽中游標的速度，或 Toss 中狗狗的速度（px/s）；Rig 據此傾斜與拉伸。靜止時為 0。 */
   readonly velocity: Point;
   readonly facing: "left" | "right";
+  /** 前景全螢幕而隱藏：覆蓋層不繪製，也不 Chatter。 */
+  readonly hidden: boolean;
+  /** 建議的覆蓋層 fps：互動 60、待機 30、sleepy 或 AFK > 5 分鐘 10、隱藏 0。 */
+  readonly fps: number;
 }
 
 export type PetEffect =
@@ -233,6 +239,13 @@ const DRAG_THRESHOLD = 6;
 const PAT_HOLD = 1000;
 /** 狗狗外框大小，腳底在底部中央；拖拽時整隻狗留在工作區域內。 */
 const PET_SIZE = { width: 220, height: 170 } as const;
+/** 建議 fps 的三個檔位；隱藏為 0。 */
+const FPS_INTERACTING = 60;
+const FPS_IDLE = 30;
+const FPS_SLOW = 10;
+/** AFK 超過這麼久就降到慢速（s）。 */
+const AFK_SLOW_SECONDS = 300;
+
 /** Pickup 的驚訝演出長度，之後轉為 dragging（ms）。 */
 const PICKUP_DURATION = 300;
 /** 拖拽速度以最近這段時間內的游標位移計算（ms）。 */
@@ -339,7 +352,7 @@ export function createPet(deps: PetDeps): Pet {
   /** 最近的 Click 時間，用來判斷連點。 */
   let clickTimes: number[] = [];
   /** 最近一次 tick 帶來的使用者狀態，推導 sleepy 用。 */
-  let presence = { afkSeconds: 0, typing: false, hour: 12 };
+  let presence = { afkSeconds: 0, typing: false, hour: 12, fullscreen: false };
   /** Woken 清醒期結束的時間；沒在清醒期為 undefined。 */
   let wokenUntil: number | undefined;
   /** 下一次 Chatter 的時間；關閉時為 undefined。 */
@@ -362,7 +375,8 @@ export function createPet(deps: PetDeps): Pet {
   }
 
   function output(effects: PetEffect[] = []): PetOutput {
-    const pet = current();
+    const pet = withDisplay(current());
+    snapshot = pet;
     if (pending.length > 0) {
       effects = [...effects, ...pending];
       pending = [];
@@ -373,6 +387,26 @@ export function createPet(deps: PetDeps): Pet {
       effects = [...effects, save()];
     }
     return { snapshot: pet, effects };
+  }
+
+  /** 依隱藏與互動狀態填入 hidden 與建議 fps；沒變就沿用原物件。 */
+  function withDisplay(pet: PetSnapshot): PetSnapshot {
+    const hidden = presence.fullscreen;
+    const interacting =
+      press !== undefined ||
+      drag !== undefined ||
+      (pet.motion !== "idle" &&
+        pet.motion !== "strolling" &&
+        pet.motion !== "sleeping");
+    const fps = hidden
+      ? 0
+      : interacting
+        ? FPS_INTERACTING
+        : pet.mood === "sleepy" || presence.afkSeconds > AFK_SLOW_SECONDS
+          ? FPS_SLOW
+          : FPS_IDLE;
+    if (pet.hidden === hidden && pet.fps === fps) return pet;
+    return { ...pet, hidden, fps };
   }
 
   function save(): PetEffect {
@@ -405,6 +439,7 @@ export function createPet(deps: PetDeps): Pet {
     if (
       drag ||
       pet.mood === "sleepy" ||
+      presence.fullscreen ||
       (presence.typing && settings.quietWhileTyping)
     ) {
       return [];
@@ -811,6 +846,7 @@ export function createPet(deps: PetDeps): Pet {
         afkSeconds: input.afkSeconds ?? 0,
         typing: input.typing ?? false,
         hour: input.hour ?? 12,
+        fullscreen: input.fullscreen ?? false,
       };
       decay(now);
       patIfHeld(now);
@@ -1149,5 +1185,7 @@ function restSnapshot(
     position,
     velocity: STILL,
     facing: "left",
+    hidden: false,
+    fps: FPS_IDLE,
   };
 }

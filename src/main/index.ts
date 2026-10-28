@@ -8,6 +8,7 @@ import {
 } from "../core/pet";
 import { IPC, type OverlayInit } from "../preload/api";
 import lines from "./lines.json";
+import { watchFullscreen } from "./fullscreen";
 import { readJson, writeJson } from "./store";
 
 /** 核心 tick 間隔（ms）；Pat 判定依賴它。 */
@@ -127,6 +128,8 @@ app.whenReady().then(() => {
     return afkSeconds < TYPING_IDLE && !moved;
   }
 
+  const fullscreenWatcher = watchFullscreen();
+
   function loop(): void {
     const afkSeconds = powerMonitor.getSystemIdleTime();
     const date = new Date();
@@ -136,6 +139,7 @@ app.whenReady().then(() => {
         displays: petDisplays(),
         afkSeconds,
         typing: typing(afkSeconds),
+        fullscreen: fullscreenWatcher.isFullscreen(),
         hour: date.getHours() + date.getMinutes() / 60,
       })
     );
@@ -151,6 +155,7 @@ app.whenReady().then(() => {
     });
   });
 
+  app.on("before-quit", () => fullscreenWatcher.stop());
   app.on("before-quit", () => persist(pet.stop({ now: Date.now() })));
 
   for (const display of screen.getAllDisplays()) createOverlay(display);

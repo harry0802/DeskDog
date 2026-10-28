@@ -19,10 +19,7 @@ await app.init({
   resolution: window.devicePixelRatio,
   autoDensity: true,
 });
-/** 待機 30fps；抱起、下落、落地時 60fps。 */
-const IDLE_FPS = 30;
-const ACTIVE_FPS = 60;
-app.ticker.maxFPS = IDLE_FPS;
+app.ticker.maxFPS = 30;
 document.body.appendChild(app.canvas);
 
 const rig = new Rig(createPlaceholderParts(app.renderer), bounds);
@@ -51,12 +48,23 @@ app.ticker.add((ticker) => {
 const isCarried = (motion: Motion) =>
   motion === "pickedUp" || motion === "dragging";
 
+/** 前景全螢幕而隱藏中：不回應游標，也不攔截滑鼠。 */
+let hidden = false;
+
 function render({ snapshot, effects }: PetOutput): void {
   // 每個覆蓋層都畫狗狗（超出螢幕的部分自然被裁掉），跨在螢幕邊上時不會斷掉。
   rig.apply(snapshot);
   const here = snapshot.displayId === displayId;
-  const resting = snapshot.motion === "idle" || snapshot.motion === "sleeping";
-  app.ticker.maxFPS = resting ? IDLE_FPS : ACTIVE_FPS;
+  // 核心建議的 fps；0 為隱藏，停止繪製。
+  hidden = snapshot.hidden;
+  document.body.style.visibility = hidden ? "hidden" : "";
+  if (hidden) setHit(false);
+  if (snapshot.fps === 0) {
+    app.ticker.stop();
+  } else {
+    app.ticker.maxFPS = snapshot.fps;
+    if (!app.ticker.started) app.ticker.start();
+  }
   document.body.style.cursor = isCarried(snapshot.motion) ? "grabbing" : "";
   // 拖拽中 Bubble 跟著頭頂走。
   if (bubble.view.visible) bubble.follow(rig.headTop());
@@ -104,6 +112,7 @@ function sendPointer(type: PointerEvent["type"], e: MouseEvent): void {
 }
 
 window.addEventListener("mousemove", (e) => {
+  if (hidden) return;
   rig.lookAt({ x: e.clientX, y: e.clientY });
   if (pressed) {
     sendPointer("move", e);

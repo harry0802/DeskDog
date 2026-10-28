@@ -1724,3 +1724,74 @@ describe("Stroll", () => {
     expect(out.snapshot.motion).toBe("pickedUp");
   });
 });
+
+describe("Fullscreen hiding and fps", () => {
+  const MIN = 60_000;
+  const at = (
+    pet: ReturnType<typeof createPet>,
+    now: number,
+    input: Partial<Parameters<typeof pet.tick>[0]> = {}
+  ) => pet.tick({ now, displays: [primary], ...input });
+
+  it("hides while a foreground app is fullscreen and shows again after", () => {
+    const { pet } = startedPet();
+
+    expect(at(pet, 1000).snapshot.hidden).toBe(false);
+    expect(at(pet, 2000, { fullscreen: true }).snapshot.hidden).toBe(true);
+    expect(at(pet, 3000, { fullscreen: true }).snapshot.hidden).toBe(true);
+    expect(at(pet, 4000, { fullscreen: false }).snapshot.hidden).toBe(false);
+  });
+
+  it("does not Chatter while hidden, and chatters once shown again", () => {
+    const { pet } = startedPet();
+    const hiddenSaid: string[] = [];
+    for (let now = 1000; now <= 30 * MIN; now += 1000) {
+      hiddenSaid.push(...said(at(pet, now, { fullscreen: true })));
+    }
+
+    expect(hiddenSaid).toEqual([]);
+    expect(said(at(pet, 30 * MIN + 1000))).not.toEqual([]);
+  });
+
+  it.each([
+    { why: "idle", input: {}, fps: 30 },
+    { why: "fullscreen", input: { fullscreen: true }, fps: 0 },
+    { why: "AFK for over 5 minutes", input: { afkSeconds: 301 }, fps: 10 },
+    { why: "AFK for exactly 5 minutes", input: { afkSeconds: 300 }, fps: 30 },
+    { why: "asleep at night", input: { hour: 23.5, afkSeconds: 181 }, fps: 10 },
+  ])("suggests $fps fps when $why", ({ input, fps }) => {
+    const { pet } = startedPet();
+
+    expect(at(pet, 1000, input).snapshot.fps).toBe(fps);
+  });
+
+  it("suggests 60 fps while held, dragged and falling", () => {
+    const { pet } = startedPet();
+    const down = pet.pointer({
+      type: "down",
+      time: 1000,
+      position: BODY,
+      hit: "body",
+    });
+    const moved = pet.pointer({
+      type: "move",
+      time: 1100,
+      position: { x: BODY.x + 40, y: BODY.y - 200 },
+      hit: "body",
+    });
+    const dragging = at(pet, 2000);
+    pet.pointer({
+      type: "up",
+      time: 2100,
+      position: { x: BODY.x + 40, y: BODY.y - 200 },
+      hit: "body",
+    });
+    const falling = at(pet, 2116);
+
+    expect(down.snapshot.fps).toBe(60);
+    expect(moved.snapshot.fps).toBe(60);
+    expect(dragging.snapshot.fps).toBe(60);
+    expect(falling.snapshot.motion).toBe("falling");
+    expect(falling.snapshot.fps).toBe(60);
+  });
+});
