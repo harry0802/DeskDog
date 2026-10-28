@@ -1,0 +1,10 @@
+{
+  // Pet 核心：lib 不含 DOM、types 不含 node，確保核心是純邏輯。
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": []
+  },
+  "include": ["src/core"],
+  "exclude": ["src/**/*.test.ts"]
+}

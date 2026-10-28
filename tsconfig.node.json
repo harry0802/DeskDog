@@ -1,0 +1,16 @@
+{
+  // 主行程、preload、設定檔與測試。
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": [
+    "src/main",
+    "src/preload",
+    "src/core",
+    "src/**/*.test.ts",
+    "electron.vite.config.ts",
+    "vitest.config.ts"
+  ]
+}

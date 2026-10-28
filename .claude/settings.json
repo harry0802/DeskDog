@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm run type-check)",
+      "Bash(pnpm run test)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "PowerShell(pnpm run type-check)",
+      "PowerShell(pnpm run test)",
+      "PowerShell(git add:*)",
+      "PowerShell(git commit:*)"
+    ]
+  }
+}
