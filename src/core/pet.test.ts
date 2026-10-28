@@ -669,3 +669,118 @@ describe("Drop", () => {
     expect(out.snapshot.affection).toBe(started.snapshot.affection);
   });
 });
+
+/**
+ * 從 BODY 抱起、慢慢拖到 from（游標座標），再以 velocity（px/s）甩 80ms，在 at 時放開。
+ * 腳底相對游標的位移為 (40, 92)。
+ */
+function toss(
+  pet: ReturnType<typeof createPet>,
+  from: Point,
+  velocity: Point,
+  at = 2000
+): PetOutput {
+  pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
+  pet.pointer({
+    type: "move",
+    time: 1050,
+    position: { x: BODY.x - 10, y: BODY.y },
+    hit: "body",
+  });
+  pet.pointer({ type: "move", time: 1500, position: from, hit: "body" });
+  let position = from;
+  for (let i = 0; i <= 5; i++) {
+    const ms = 16 * i;
+    position = {
+      x: from.x + (velocity.x * ms) / 1000,
+      y: from.y + (velocity.y * ms) / 1000,
+    };
+    pet.pointer({ type: "move", time: at - 80 + ms, position, hit: "body" });
+  }
+  return pet.pointer({ type: "up", time: at, position, hit: "body" });
+}
+
+/** 每 16ms tick 一次直到 until，回傳每次的快照。 */
+function run(pet: ReturnType<typeof createPet>, from: number, until: number) {
+  const snapshots = [];
+  for (let now = from + 16; now <= until; now += 16) {
+    snapshots.push(tick(pet, now).snapshot);
+  }
+  return snapshots;
+}
+
+describe("Toss", () => {
+  it("flies along a parabola when dropped with velocity and comes to rest on the Ground", () => {
+    const { pet, started } = startedPet();
+    const ground = started.snapshot.position.y;
+
+    // 往左上方甩出。
+    const dropped = toss(pet, { x: 1500, y: 1000 }, { x: -800, y: -800 });
+    const path = run(pet, 2000, 6000);
+
+    const peak = Math.min(...path.map((s) => s.position.y));
+    expect(peak).toBeLessThan(dropped.snapshot.position.y);
+    // 持續往左飛，沒有直直落下。
+    expect(path[10]!.position.x).toBeLessThan(
+      dropped.snapshot.position.x - 100
+    );
+    const rest = path[path.length - 1]!;
+    expect(rest.motion).toBe("idle");
+    expect(rest.position.y).toBe(ground);
+    expect(rest.velocity).toEqual({ x: 0, y: 0 });
+  });
+
+  it("caps the Toss speed and bounces off the screen's left edge", () => {
+    const { pet } = startedPet();
+
+    // 貼近左緣、沿 Ground 以 4000 px/s 往左甩。
+    const dropped = toss(pet, { x: 400, y: BODY.y }, { x: -4000, y: 0 });
+    expect(dropped.snapshot.velocity.x).toBeCloseTo(-2500);
+
+    const path = run(pet, 2000, 4000);
+    const left = Math.min(...path.map((s) => s.position.x));
+    expect(left).toBeGreaterThan(0);
+    // 撞牆後往右彈回，速度只剩一部分。
+    const bounced = path.find((s) => s.velocity.x > 0);
+    expect(bounced).toBeDefined();
+    expect(bounced!.velocity.x).toBeLessThan(2500 * 0.3);
+    expect(bounced!.velocity.x).toBeGreaterThan(2500 * 0.2 - 100);
+  });
+});
+
+describe("Drag physics setting", () => {
+  it("off: a Drop goes straight back to the Ground without a Toss", () => {
+    const { pet, started } = startedPet(
+      {},
+      { settings: { dragPhysics: "off" } }
+    );
+
+    const dropped = toss(pet, { x: 1500, y: 1000 }, { x: -800, y: -800 });
+
+    expect(dropped.snapshot.position).toEqual({
+      x: dropped.snapshot.position.x,
+      y: started.snapshot.position.y,
+    });
+    expect(dropped.snapshot.velocity).toEqual({ x: 0, y: 0 });
+    expect(dropped.snapshot.motion).toBe("landing");
+    const rest = run(pet, 2000, 3000).at(-1)!;
+    expect(rest.motion).toBe("idle");
+    expect(rest.position).toEqual(dropped.snapshot.position);
+  });
+
+  it("lively: switching the setting raises the Toss speed cap and the bounce", () => {
+    const wallToss = (pet: ReturnType<typeof createPet>) => {
+      const dropped = toss(pet, { x: 400, y: BODY.y }, { x: -4000, y: 0 });
+      const bounced = run(pet, 2000, 4000).find((s) => s.velocity.x > 0);
+      return { cap: -dropped.snapshot.velocity.x, bounce: bounced!.velocity.x };
+    };
+    const standard = wallToss(startedPet().pet);
+    const { pet } = startedPet();
+
+    pet.configure({ dragPhysics: "lively" });
+    const lively = wallToss(pet);
+
+    expect(lively.cap).toBeGreaterThan(standard.cap);
+    expect(lively.bounce).toBeGreaterThan(standard.bounce);
+  });
+});

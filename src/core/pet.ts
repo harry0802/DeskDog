@@ -39,7 +39,11 @@ export interface SavedPetState {
 export interface Settings {
   /** 狗狗名字，帶入 Line 中的 {name}。 */
   readonly name: string;
+  /** 拖拽物理：off 時 Drop 直接回到 Ground，lively 回彈與 Toss 速度上限更高。 */
+  readonly dragPhysics: DragPhysics;
 }
+
+export type DragPhysics = "standard" | "lively" | "off";
 
 export interface TickInput {
   readonly now: number;
@@ -106,7 +110,7 @@ export interface PetSnapshot {
   readonly displayId: DisplayId;
   /** 狗狗腳底中心點，螢幕座標；靜止時 y 等於 Ground。 */
   readonly position: Point;
-  /** 拖拽中游標的速度（px/s），Rig 據此傾斜與拉伸；其餘時候為 0。 */
+  /** 拖拽中游標的速度，或 Toss 中狗狗的速度（px/s）；Rig 據此傾斜與拉伸。靜止時為 0。 */
   readonly velocity: Point;
   readonly facing: "left" | "right";
 }
@@ -130,12 +134,14 @@ export interface Pet {
   start(input: StartInput): PetOutput;
   tick(input: TickInput): PetOutput;
   pointer(event: PointerEvent): PetOutput;
+  /** 設定變更；未給的欄位維持原值。 */
+  configure(settings: Partial<Settings>): PetOutput;
 }
 
 /** 腳底中心點距離工作區域右緣的距離。 */
 const HOME_RIGHT_INSET = 120;
 const DEFAULT_AFFECTION = 50;
-const DEFAULT_SETTINGS: Settings = { name: "小柴" };
+const DEFAULT_SETTINGS: Settings = { name: "小柴", dragPhysics: "standard" };
 const PAT_AFFECTION = 4;
 const SAFE_DROP_AFFECTION = 1;
 /** Pat 之後繼續撫摸，每隔這麼久再 +1（ms）。 */
@@ -159,6 +165,18 @@ export const FAST_DRAG_SPEED = 1500;
 const FAST_LINE_COOLDOWN = 3000;
 /** Drop 後下落的重力加速度（px/s²）。 */
 const GRAVITY = 1600;
+/** 在 Ground 上滑行時的摩擦減速度（px/s²）。 */
+const FRICTION = 1800;
+/**
+ * 各拖拽物理模式的 Toss：maxSpeed 為速度上限（px/s），
+ * restitution 為撞到螢幕邊緣時保留的速度比例。
+ */
+const TOSS: Record<Exclude<DragPhysics, "off">, Toss> = {
+  standard: { maxSpeed: 2500, restitution: 0.25 },
+  lively: { maxSpeed: 3500, restitution: 0.45 },
+};
+/** 物理模擬的固定步長，結果與 tick 間隔無關（ms）。 */
+const PHYSICS_STEP = 4;
 /** 從至少這個高度 Drop 才說 falling Line（px）。 */
 const FALLING_LINE_HEIGHT = 300;
 /** 落地壓扁回彈的長度，之後回到 idle 並說 landing Line（ms）。 */
@@ -197,7 +215,7 @@ export function createPet(deps: PetDeps): Pet {
         /** 腳底相對游標的位置，維持抓住的那一點。 */
         offset: Point;
         /** 最近 VELOCITY_WINDOW 內的游標位置，由舊到新。 */
-        samples: { time: number; position: Point }[];
+        samples: Sample[];
         /** 目前正快速拖拽。 */
         fast: boolean;
         /** 這次 Pickup 曾被快速甩動。 */
@@ -205,8 +223,8 @@ export function createPet(deps: PetDeps): Pet {
         fastLineAt: number;
       }
     | undefined;
-  /** Drop 後下落中：放開時的位置與時間。 */
-  let fall: { from: Point; time: number } | undefined;
+  /** Drop 後到停下為止：飛行、下落或在 Ground 上滑行。time 為已模擬到的時間。 */
+  let flight: (Flight & { time: number; toss: Toss }) | undefined;
   /** 落到 Ground 的時間；落地演出結束後清除。 */
   let landedAt: number | undefined;
   let displays: readonly Display[] = [];
@@ -296,7 +314,7 @@ export function createPet(deps: PetDeps): Pet {
   function pickup(now: number, grab: Point, at: Point): PetOutput {
     interact(now);
     // 在空中或落地時也能再抓起，取消下落與落地演出。
-    fall = undefined;
+    flight = undefined;
     landedAt = undefined;
     const { position } = current();
     drag = {
@@ -316,19 +334,10 @@ export function createPet(deps: PetDeps): Pet {
   function moveTo(at: Point): void {
     if (!drag) return;
     const pet = current();
-    const { workArea } = displayOf(displays, pet.displayId);
-    const halfWidth = PET_SIZE.width / 2;
+    const area = feetArea(displayOf(displays, pet.displayId).workArea);
     const position = {
-      x: clamp(
-        at.x + drag.offset.x,
-        workArea.x + halfWidth,
-        workArea.x + workArea.width - halfWidth
-      ),
-      y: clamp(
-        at.y + drag.offset.y,
-        workArea.y + PET_SIZE.height,
-        ground(workArea)
-      ),
+      x: clamp(at.x + drag.offset.x, area.left, area.right),
+      y: clamp(at.y + drag.offset.y, area.top, area.bottom),
     };
     if (position.x !== pet.position.x || position.y !== pet.position.y) {
       snapshot = { ...pet, position };
@@ -340,7 +349,7 @@ export function createPet(deps: PetDeps): Pet {
     if (!drag) return [];
     if (now - drag.since >= PICKUP_DURATION) setMotion("dragging");
     if (at) drag.samples.push({ time: now, position: at });
-    drag.samples = drag.samples.filter((s) => now - s.time <= VELOCITY_WINDOW);
+    drag.samples = recent(drag.samples, now);
     const velocity = velocityOf(drag.samples);
     setVelocity(velocity);
     const fast = speed(velocity) > FAST_DRAG_SPEED;
@@ -353,40 +362,56 @@ export function createPet(deps: PetDeps): Pet {
     return [say("fastDragging")];
   }
 
-  function drop(now: number): PetOutput {
+  /** at 為放開時的游標位置；游標仍有速度時 Toss。 */
+  function drop(now: number, at: Point): PetOutput {
     // 被快速甩動不加也不扣。
     const safe = !drag?.shaken;
+    const samples = [...(drag?.samples ?? []), { time: now, position: at }];
+    const physics = settings.dragPhysics;
+    const toss = physics === "off" ? undefined : TOSS[physics];
+    const velocity = toss
+      ? limitSpeed(velocityOf(recent(samples, now)), toss.maxSpeed)
+      : STILL;
     drag = undefined;
-    setVelocity(STILL);
+    setVelocity(velocity);
     interact(now);
     update(safe ? SAFE_DROP_AFFECTION : 0);
     const from = current().position;
-    fall = { from, time: now };
+    if (!toss) {
+      snapshot = { ...current(), position: { x: from.x, y: groundY() } };
+      landedAt = now;
+      setMotion("landing");
+      return output();
+    }
+    flight = { position: from, velocity, time: now, grounded: false, toss };
     setMotion("falling");
     return output(
       groundY() - from.y >= FALLING_LINE_HEIGHT ? [say("falling")] : []
     );
   }
 
-  /** 依重力推進下落與落地；落地演出結束時回傳 landing Line。 */
+  /** 依物理推進 Toss、下落與滑行；落地演出結束時回傳 landing Line。 */
   function settle(now: number): PetEffect[] {
-    if (fall) {
-      const { from, time } = fall;
-      const y0 = groundY();
-      // 落到 Ground 的時間由下落高度直接算出，與 tick 間隔無關。
-      const impact = time + Math.sqrt((2 * (y0 - from.y)) / GRAVITY) * 1000;
-      if (now < impact) {
-        const t = (now - time) / 1000;
-        const y = from.y + (GRAVITY * t * t) / 2;
-        snapshot = { ...current(), position: { x: from.x, y } };
-        return [];
+    if (flight) {
+      const area = feetArea(displayOf(displays, current().displayId).workArea);
+      while (flight.time < now) {
+        const ms = Math.min(PHYSICS_STEP, now - flight.time);
+        flight.time += ms;
+        if (step(flight, ms / 1000, area, flight.toss.restitution)) {
+          landedAt = flight.time;
+          setMotion("landing");
+        }
       }
-      fall = undefined;
-      landedAt = impact;
-      snapshot = { ...current(), position: { x: from.x, y: y0 } };
-      setMotion("landing");
+      const { position, velocity, grounded } = flight;
+      snapshot = { ...current(), position, velocity };
+      // 在 Ground 上停下才算結束。
+      if (grounded && velocity.x === 0) flight = undefined;
     }
-    if (landedAt !== undefined && now - landedAt >= LANDING_DURATION) {
+    if (
+      !flight &&
+      landedAt !== undefined &&
+      now - landedAt >= LANDING_DURATION
+    ) {
       landedAt = undefined;
       setMotion("idle");
       return [say("landing")];
@@ -436,6 +461,10 @@ export function createPet(deps: PetDeps): Pet {
       patIfHeld(now);
       return output([...carry(now), ...settle(now)]);
     },
+    configure(change) {
+      settings = { ...settings, ...change };
+      return output();
+    },
     pointer(event) {
       if (event.type === "down") {
         press =
@@ -467,7 +496,7 @@ export function createPet(deps: PetDeps): Pet {
         const patted = patIfHeld(event.time);
         const { dragged, time } = press;
         press = undefined;
-        if (drag) return drop(event.time);
+        if (drag) return drop(event.time, event.position);
         const quick = event.time - time < PAT_HOLD;
         if (!dragged && !patted && quick) return click(event.time);
         update();
@@ -501,10 +530,82 @@ function linePool({ mood, affection }: PetSnapshot): LinePool {
   return mood === "normal" && affection < COLD_AFFECTION ? "coldNormal" : mood;
 }
 
+/** 腳底可以到的範圍：整隻狗留在工作區域內。 */
+interface FeetArea {
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+
+function feetArea(workArea: Rect): FeetArea {
+  const halfWidth = PET_SIZE.width / 2;
+  return {
+    left: workArea.x + halfWidth,
+    right: workArea.x + workArea.width - halfWidth,
+    top: workArea.y + PET_SIZE.height,
+    bottom: ground(workArea),
+  };
+}
+
+interface Toss {
+  readonly maxSpeed: number;
+  readonly restitution: number;
+}
+
+interface Flight {
+  position: Point;
+  velocity: Point;
+  /** 已落到 Ground，之後在 Ground 上滑行。 */
+  grounded: boolean;
+}
+
+/** 推進一個物理步長；回傳這一步是否剛落到 Ground。 */
+function step(
+  flight: Flight,
+  dt: number,
+  area: FeetArea,
+  restitution: number
+): boolean {
+  let { x, y } = flight.position;
+  let { x: vx, y: vy } = flight.velocity;
+  let landed = false;
+  if (!flight.grounded) {
+    y += vy * dt + (GRAVITY * dt * dt) / 2;
+    vy += GRAVITY * dt;
+    if (y >= area.bottom) {
+      y = area.bottom;
+      vy = 0;
+      flight.grounded = true;
+      landed = true;
+    } else if (y < area.top) {
+      y = area.top;
+      vy = -vy * restitution;
+    }
+  } else {
+    const slowdown = FRICTION * dt;
+    vx = Math.abs(vx) <= slowdown ? 0 : vx - Math.sign(vx) * slowdown;
+  }
+  x += vx * dt;
+  // 撞到左右邊緣反彈。
+  if (x < area.left || x > area.right) {
+    x = clamp(x, area.left, area.right);
+    vx = -vx * restitution;
+  }
+  flight.position = { x, y };
+  flight.velocity = { x: vx, y: vy };
+  return landed;
+}
+
+type Sample = { time: number; position: Point };
+
+/** 只留最近 VELOCITY_WINDOW 內的樣本。 */
+function recent(samples: readonly Sample[], now: number): Sample[] {
+  return samples.filter((s) => now - s.time <= VELOCITY_WINDOW);
+}
+
 /** 由舊到新的位置樣本推算速度（px/s）；樣本不足時為 0。 */
-function velocityOf(
-  samples: readonly { time: number; position: Point }[]
-): Point {
+function velocityOf(samples: readonly Sample[]): Point {
   const first = samples[0];
   const last = samples[samples.length - 1];
   if (!first || !last || last.time === first.time) return STILL;
@@ -517,6 +618,13 @@ function velocityOf(
 
 function speed(velocity: Point): number {
   return Math.hypot(velocity.x, velocity.y);
+}
+
+function limitSpeed(velocity: Point, max: number): Point {
+  const ratio = max / speed(velocity);
+  return ratio < 1
+    ? { x: velocity.x * ratio, y: velocity.y * ratio }
+    : velocity;
 }
 
 function distance(a: Point, b: Point): number {
