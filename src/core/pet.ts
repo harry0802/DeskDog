@@ -177,6 +177,10 @@ export interface Pet {
   pointer(event: PointerEvent): PetOutput;
   /** 設定變更；未給的欄位維持原值。 */
   configure(settings: Partial<Settings>): PetOutput;
+  /** 使用者從系統列顯示／隱藏狗狗；隱藏時 0fps、不 Chatter。 */
+  setVisible(visible: boolean): PetOutput;
+  /** 重置好感度：Affection 回預設、Neglect 與情緒冷卻清空；位置與設定不變。 */
+  resetAffection(): PetOutput;
   /** App 關閉：要求存檔。 */
   stop(input: StopInput): PetOutput;
 }
@@ -339,6 +343,8 @@ export function createPet(deps: PetDeps): Pet {
   let displays: readonly Display[] = [];
   let settings = DEFAULT_SETTINGS;
   let lastTick = 0;
+  /** 使用者從系統列把狗狗收起來。 */
+  let userHidden = false;
   /** 距上一次 Interaction 的時間，只計 App 執行中（ms）。 */
   let neglect = 0;
   /** 上次扣 Affection 後累積的 Neglect（ms）。 */
@@ -391,7 +397,7 @@ export function createPet(deps: PetDeps): Pet {
 
   /** 依隱藏與互動狀態填入 hidden 與建議 fps；沒變就沿用原物件。 */
   function withDisplay(pet: PetSnapshot): PetSnapshot {
-    const hidden = presence.fullscreen;
+    const hidden = presence.fullscreen || userHidden;
     const interacting =
       press !== undefined ||
       drag !== undefined ||
@@ -440,6 +446,7 @@ export function createPet(deps: PetDeps): Pet {
       drag ||
       pet.mood === "sleepy" ||
       presence.fullscreen ||
+      userHidden ||
       (presence.typing && settings.quietWhileTyping)
     ) {
       return [];
@@ -857,6 +864,22 @@ export function createPet(deps: PetDeps): Pet {
     },
     stop({ now }) {
       decay(now);
+      saveRequested = true;
+      return output();
+    },
+    setVisible(visible) {
+      userHidden = !visible;
+      return output();
+    },
+    resetAffection() {
+      neglect = 0;
+      neglectSinceDecay = 0;
+      sulking = false;
+      coaxes = [];
+      annoyedUntil = undefined;
+      clickTimes = [];
+      wokenUntil = undefined;
+      update(DEFAULT_AFFECTION - current().affection);
       saveRequested = true;
       return output();
     },

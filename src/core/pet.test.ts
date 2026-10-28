@@ -1795,3 +1795,61 @@ describe("Fullscreen hiding and fps", () => {
     expect(falling.snapshot.fps).toBe(60);
   });
 });
+
+describe("Tray controls", () => {
+  const tick = (pet: ReturnType<typeof createPet>, now: number) =>
+    pet.tick({ now, displays: [primary] });
+
+  it("hides at 0 fps when the user hides the pet, and shows again", () => {
+    const { pet } = startedPet();
+
+    const hidden = pet.setVisible(false).snapshot;
+    expect(hidden.hidden).toBe(true);
+    expect(hidden.fps).toBe(0);
+    expect(tick(pet, 1000).snapshot.hidden).toBe(true);
+
+    const shown = pet.setVisible(true).snapshot;
+    expect(shown.hidden).toBe(false);
+    expect(shown.fps).toBe(30);
+  });
+
+  it("stays hidden after a fullscreen app leaves if the user hid it", () => {
+    const { pet } = startedPet();
+    pet.setVisible(false);
+
+    const out = pet.tick({ now: 1000, displays: [primary], fullscreen: true });
+    expect(out.snapshot.hidden).toBe(true);
+    expect(tick(pet, 2000).snapshot.hidden).toBe(true);
+  });
+
+  it("does not Chatter while hidden by the user", () => {
+    const { pet } = startedPet();
+    pet.setVisible(false);
+    const spoken: string[] = [];
+    for (let now = 1000; now <= 30 * 60_000; now += 1000) {
+      spoken.push(...said(tick(pet, now)));
+    }
+    expect(spoken).toEqual([]);
+  });
+
+  it("resets Affection and Neglect but keeps position and settings", () => {
+    const { pet } = startedPet(
+      {},
+      { now: 0, saved: { affection: 90, neglect: 50 * 60_000 } }
+    );
+    pet.configure({ name: "阿福" });
+    const before = tick(pet, 1000).snapshot;
+    expect(before.mood).toBe("sulky");
+
+    const out = pet.resetAffection();
+
+    expect(out.snapshot.affection).toBe(50);
+    expect(out.snapshot.mood).toBe("normal");
+    expect(out.snapshot.position).toEqual(before.position);
+    const save = out.effects.find((e) => e.type === "save");
+    expect(save).toMatchObject({
+      petState: { affection: 50, neglect: 0, sulking: false },
+      settings: { name: "阿福" },
+    });
+  });
+});

@@ -10,6 +10,7 @@ import { IPC, type OverlayInit } from "../preload/api";
 import lines from "./lines.json";
 import { watchFullscreen } from "./fullscreen";
 import { readJson, writeJson } from "./store";
+import { createTray } from "./tray";
 
 /** 核心 tick 間隔（ms）；Pat 判定依賴它。 */
 const TICK_INTERVAL = 100;
@@ -157,6 +158,14 @@ app.whenReady().then(() => {
 
   app.on("before-quit", () => fullscreenWatcher.stop());
   app.on("before-quit", () => persist(pet.stop({ now: Date.now() })));
+
+  // 保持參考，避免系統列圖示被垃圾回收。
+  const tray = createTray({
+    setVisible: (visible) => publish(pet.setVisible(visible)),
+    resetAffection: () => publish(pet.resetAffection()),
+    quit: () => app.quit(),
+  });
+  app.on("before-quit", () => tray.destroy());
 
   for (const display of screen.getAllDisplays()) createOverlay(display);
 });
