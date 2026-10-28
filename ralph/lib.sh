@@ -10,7 +10,8 @@ fi
 # Stop Git Bash from rewriting container paths like /work into C:\...
 export MSYS_NO_PATHCONV=1
 
-root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# C:/... form: with path conversion off, native git.exe can't read /c/...
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -W)
 env_file="$root/ralph/.env"
 image="sandcastle:deskdog"
 podman=$(command -v podman || echo "/c/Program Files/RedHat/Podman/podman.exe")
