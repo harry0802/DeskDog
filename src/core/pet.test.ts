@@ -715,7 +715,7 @@ describe("Toss", () => {
     const ground = started.snapshot.position.y;
 
     // 往左上方甩出。
-    const dropped = toss(pet, { x: 1500, y: 1000 }, { x: -1600, y: -1600 });
+    const dropped = toss(pet, { x: 1500, y: 1000 }, { x: -2400, y: -2400 });
     const path = run(pet, 2000, 6000);
 
     const peak = Math.min(...path.map((s) => s.position.y));

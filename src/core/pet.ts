@@ -170,7 +170,7 @@ const FRICTION = 4000;
 /** 飛行中的空氣阻力：水平速度每秒衰減的比例係數（1/s）。 */
 const AIR_DRAG = 1.5;
 /** 放開時游標速度只有這個比例帶給 Toss，避免輕輕一甩就飛很遠。 */
-const TOSS_TRANSFER = 0.5;
+const TOSS_TRANSFER = 0.35;
 /** 游標速度低於此值時不 Toss，直接落下（px/s）。 */
 const MIN_TOSS_SPEED = 800;
 /**
