@@ -69,7 +69,7 @@ describe("start", () => {
 });
 
 describe("Click", () => {
-  it("adds 2 Affection and says a Line from the current Mood's pool", () => {
+  it("says a Line from the current Mood's pool without changing Affection", () => {
     const { pet, started } = startedPet();
 
     pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
@@ -80,7 +80,7 @@ describe("Click", () => {
       hitBody: true,
     });
 
-    expect(out.snapshot.affection).toBe(started.snapshot.affection + 2);
+    expect(out.snapshot.affection).toBe(started.snapshot.affection);
     expect(said(out)).toHaveLength(1);
     expect(["normal-1", "normal-2"]).toContain(said(out)[0]);
   });
@@ -104,9 +104,7 @@ describe("Click", () => {
       });
 
       expect(said(out)).toHaveLength(isClick ? 1 : 0);
-      expect(out.snapshot.affection).toBe(
-        started.snapshot.affection + (isClick ? 2 : 0)
-      );
+      expect(out.snapshot.affection).toBe(started.snapshot.affection);
     }
   );
 
@@ -127,18 +125,18 @@ describe("Click", () => {
     expect(said(out)).toHaveLength(isClick ? 1 : 0);
   });
 
-  it("becomes happy and says happy Lines once Affection reaches 75", () => {
+  it("says happy Lines once Pats raise Affection to 75", () => {
     const { pet } = startedPet({
       lines: lines({ normal: ["n"], happy: ["h"] }),
     });
 
-    const outputs = Array.from({ length: 13 }, () => click(pet));
-
-    // 預設 50，每次 +2：第 12 次 74 仍 normal，第 13 次 76 轉 happy。
-    expect(outputs[11]?.snapshot.mood).toBe("normal");
-    expect(said(outputs[11]!)).toEqual(["n"]);
-    expect(outputs[12]?.snapshot.mood).toBe("happy");
-    expect(said(outputs[12]!)).toEqual(["h"]);
+    // 預設 50，每次 Pat +4：6 次後 74 仍 normal，第 7 次 78 轉 happy。
+    for (let i = 0; i < 6; i++) pat(pet);
+    expect(said(click(pet))).toEqual(["n"]);
+    pat(pet);
+    const out = click(pet);
+    expect(out.snapshot.mood).toBe("happy");
+    expect(said(out)).toEqual(["h"]);
   });
 
   it("ignores presses that start off the body", () => {
@@ -167,6 +165,18 @@ function seeded(seed: number): () => number {
 }
 
 let clock = 10_000;
+/** 按住 1.1 秒後放開：一次 Pat。 */
+function pat(pet: ReturnType<typeof createPet>): PetOutput {
+  clock += 5_000;
+  pet.pointer({ type: "down", time: clock, position: BODY, hitBody: true });
+  return pet.pointer({
+    type: "up",
+    time: clock + 1_100,
+    position: BODY,
+    hitBody: true,
+  });
+}
+
 function click(pet: ReturnType<typeof createPet>): PetOutput {
   clock += 5_000;
   pet.pointer({ type: "down", time: clock, position: BODY, hitBody: true });
@@ -303,13 +313,13 @@ describe("Mood from Affection", () => {
     { affection: 30, mood: "normal", pool: "normal" },
     { affection: 26, mood: "normal", pool: "coldNormal" },
   ])(
-    "Affection $affection after a Click → $mood, Line from $pool",
+    "Affection $affection → $mood, a Click says a Line from $pool",
     ({ affection, mood, pool }) => {
       const { pet } = startedPet(
         {
           lines: lines({ happy: ["h"], normal: ["n"], coldNormal: ["c"] }),
         },
-        { saved: { affection: affection - 2 } }
+        { saved: { affection } }
       );
 
       const out = click(pet);
@@ -337,9 +347,9 @@ describe("Affection range", () => {
   );
 
   it("never rises above 100", () => {
-    const { pet } = startedPet({}, { saved: { affection: 99 } });
+    const { pet } = startedPet({}, { saved: { affection: 98 } });
 
-    expect(click(pet).snapshot.affection).toBe(100);
-    expect(click(pet).snapshot.affection).toBe(100);
+    expect(pat(pet).snapshot.affection).toBe(100);
+    expect(pat(pet).snapshot.affection).toBe(100);
   });
 });

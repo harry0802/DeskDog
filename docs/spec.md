@@ -55,9 +55,9 @@ DeskDog 是一隻常駐 Windows 桌面的側面視角狗狗。牠站在螢幕工
 ### 手勢：Click、Pat、Pickup
 
 28. As a 使用者, I want 在狗狗身上按下並在 1 秒內放開（未移動超過拖拽門檻）算 Click, so that 輕點有明確回應。
-29. As a 使用者, I want Click 讓 Affection +2 並依目前 Mood 說一句 Line, so that 每次點牠都有回饋。
+29. As a 使用者, I want Click 依目前 Mood 說一句 Line（不改變 Affection，只有 Pat 會增加）, so that 每次點牠都有回饋。
 30. As a 使用者, I want 在狗狗身上按住不動達 1 秒算 Pat, so that 我能好好摸摸牠。
-31. As a 使用者, I want Pat 讓 Affection +4 並進入 Afterglow（持續摸著時 Mood 為 happy，放開即結束）, so that 摸頭比點一下更有感。
+31. As a 使用者, I want Pat 讓 Affection +4 並進入 Afterglow（持續摸著時 Mood 為 happy 並冒出愛心，放開即結束）, so that 摸頭比點一下更有感。
 32. As a 使用者, I want 按住後移動超過拖拽門檻（約 6px）就 Pickup, so that 我想搬牠時不會被誤判成摸頭或點擊。
 33. As a 使用者, I want Pickup 時游標變成抓取狀態, so that 我知道我正抓著牠。
 34. As a 使用者, I want 1.5 秒內連續 Click 5 次時 Affection -1 並進入 annoyed（10 秒冷卻）, so that 狗狗有被打擾的真實反應。
@@ -105,7 +105,7 @@ DeskDog 是一隻常駐 Windows 桌面的側面視角狗狗。牠站在螢幕工
 70. As a 使用者, I want 在設定中關閉「深夜睡覺」, so that 夜貓子的我不被影響。
 71. As a 使用者, I want 睡覺中 Click 會吵醒狗狗（Woken）：說 woken Line、揉眼睛、保持清醒 2 分鐘，之後若我仍 AFK 才再睡, so that 叫醒牠有真實反應。
 72. As a 使用者, I want 睡覺中 Pat 不會吵醒牠，只在夢中搖一下尾巴, so that 我能溫柔地摸睡著的牠。
-73. As a 使用者, I want 睡覺中的 Click 照常加 Affection, so that 叫醒牠不是壞事。
+73. As a 使用者, I want 睡覺中的 Click 不扣 Affection, so that 叫醒牠不是壞事。
 74. As a 使用者, I want annoyed 的優先順序高於其他 Mood, so that 剛被惹毛的狗不會瞬間變回開心。
 75. As a 使用者, I want App 啟動時狗狗做一次 Greeting 並說 greeting Line, so that 我每次打開都被歡迎。
 
@@ -192,7 +192,7 @@ type Motion =
 | 拖拽門檻                | 約 6px 移動                                       |
 | Pat                     | 按住不動 1 秒                                     |
 | 連點判定                | 1.5 秒內 5 次 Click → Affection -1、annoyed 10 秒 |
-| Click / Pat / 安全 Drop | +2 / +4 / +1                                      |
+| Click / Pat / 安全 Drop | 0 / +4 / +1                                       |
 | Afterglow               | 持續到放開滑鼠                                    |
 | Affection Decay         | 每 1 小時 Neglect -1                              |
 | Make-up                 | 30 秒內 3 次 Interaction 或 1 次 Pat              |

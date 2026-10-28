@@ -120,7 +120,6 @@ export interface Pet {
 const HOME_RIGHT_INSET = 120;
 const DEFAULT_AFFECTION = 50;
 const DEFAULT_SETTINGS: Settings = { name: "小柴" };
-const CLICK_AFFECTION = 2;
 const PAT_AFFECTION = 4;
 const HAPPY_AFFECTION = 75;
 /** 低於此值時 normal 改用 coldNormal Line Pool。 */
@@ -170,8 +169,9 @@ export function createPet(deps: PetDeps): Pet {
     return current();
   }
 
+  // 只有 Pat 會增加 Affection；Click 只說一句話。
   function click(): PetOutput {
-    return output([say(linePool(update(CLICK_AFFECTION)))]);
+    return output([say(linePool(current()))]);
   }
 
   /** 按住不動達 PAT_HOLD 時觸發一次 Pat；回傳這次按住是否已 Pat。 */
