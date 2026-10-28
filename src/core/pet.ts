@@ -129,7 +129,10 @@ export interface PetSnapshot {
 
 export type PetEffect =
   | { readonly type: "say"; readonly line: string }
-  | { readonly type: "playAnimation"; readonly animation: "greeting" }
+  | {
+      readonly type: "playAnimation";
+      readonly animation: "greeting" | "hmph";
+    }
   /** 要求主行程把 pet-state 與 settings 寫入存檔。 */
   | {
       readonly type: "save";
@@ -390,7 +393,12 @@ export function createPet(deps: PetDeps): Pet {
       return output([say("annoyed")]);
     }
     // Make-up 的 makeUp Line 已排入 pending。
-    if (wasSulking) return output(sulking ? [say("sulkyCoaxing")] : []);
+    if (wasSulking)
+      return output(
+        sulking
+          ? [{ type: "playAnimation", animation: "hmph" }, say("sulkyCoaxing")]
+          : []
+      );
     return output([say(linePool(current()))]);
   }
 

@@ -539,6 +539,15 @@ describe("Make-up", () => {
     expect(tick(pet, clock + 10_000).snapshot.mood).toBe("sulky");
   });
 
+  it("plays the hmph animation when coaxing, not when making up", () => {
+    const pet = sulkyPet();
+    const hmph = { type: "playAnimation", animation: "hmph" };
+
+    expect(click(pet).effects).toContainEqual(hmph);
+    click(pet);
+    expect(click(pet).effects).not.toContainEqual(hmph);
+  });
+
   it("makes up after 3 Interactions within 30 seconds", () => {
     const pet = sulkyPet();
     click(pet);

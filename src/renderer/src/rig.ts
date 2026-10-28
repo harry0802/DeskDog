@@ -61,6 +61,11 @@ const STOMP_PERIOD = 360;
 const STOMP_LIFT = 14;
 const STOMP_SWAY = 4;
 
+/** hmph：sulky 被哄時先回頭看一眼，再猛然轉開並抖一下。 */
+const HMPH_DURATION = 900;
+const HMPH_LOOK_END = 0.35;
+const HMPH_SHAKE = 5;
+
 /** 各 Mood 顯示的表情 Part；未列出的眼睛、嘴巴 Part 隱藏。 */
 const EXPRESSIONS: Partial<Record<Mood, readonly string[]>> = {
   happy: ["eyes_happy", "mouth_happy"],
@@ -117,6 +122,8 @@ export class Rig {
   private elapsed = 0;
   private motionElapsed = 0;
   private greetingElapsed = GREETING_DURATION;
+  private hmphElapsed = HMPH_DURATION;
+  private snapshotFacing = -1;
   private lift = 0;
   private stretch = 0;
   private readonly tilt = new Spring(TILT_STIFFNESS, TILT_DAMPING);
@@ -151,8 +158,8 @@ export class Rig {
     };
     this.view.position.set(this.base.x, this.base.y);
     // 佔位 Part 面向右；面向左時水平翻轉。sulky 時背對使用者：轉向另一邊。
-    const away = snapshot.mood === "sulky" ? -1 : 1;
-    this.facing = (snapshot.facing === "left" ? -1 : 1) * away;
+    this.snapshotFacing = snapshot.facing === "left" ? -1 : 1;
+    this.facing = this.snapshotFacing * this.awayFactor();
     this.velocity = snapshot.velocity;
     if (snapshot.motion !== this.motion) {
       this.motion = snapshot.motion;
@@ -171,6 +178,16 @@ export class Rig {
     this.greetingElapsed = 0;
   }
 
+  playHmph(): void {
+    this.hmphElapsed = 0;
+  }
+
+  /** sulky 背對使用者（-1）；hmph 的前段回頭看（1），之後轉開。 */
+  private awayFactor(): number {
+    if (this.mood !== "sulky") return 1;
+    return this.hmphElapsed < HMPH_DURATION * HMPH_LOOK_END ? 1 : -1;
+  }
+
   update(deltaMs: number): void {
     this.elapsed += deltaMs;
     this.motionElapsed += deltaMs;
@@ -178,6 +195,8 @@ export class Rig {
       GREETING_DURATION,
       this.greetingElapsed + deltaMs
     );
+    this.hmphElapsed = Math.min(HMPH_DURATION, this.hmphElapsed + deltaMs);
+    this.facing = this.snapshotFacing * this.awayFactor();
     const happy = this.mood === "happy";
     // 跳幀時（例如視窗暫停後）避免彈簧爆衝。
     const dt = Math.min(deltaMs, 50) / 1000;
@@ -197,7 +216,13 @@ export class Rig {
     const hop = carried ? 0 : Math.max(greetingHop, happyHop);
     const stomping = this.mood === "annoyed" && !carried;
     const stompPhase = (this.elapsed / STOMP_PERIOD) * Math.PI * 2;
-    const sway = stomping ? Math.sin(stompPhase) * STOMP_SWAY : 0;
+    // 轉開之後抖一下，逐漸平息。
+    const shakeAge = this.hmphElapsed / HMPH_DURATION - HMPH_LOOK_END;
+    const shake =
+      this.mood === "sulky" && shakeAge >= 0 && this.hmphElapsed < HMPH_DURATION
+        ? Math.sin(shakeAge * 60) * HMPH_SHAKE * (1 - shakeAge)
+        : 0;
+    const sway = (stomping ? Math.sin(stompPhase) * STOMP_SWAY : 0) + shake;
     this.view.position.set(this.base.x + sway, this.base.y - hop - this.lift);
 
     // 腿保持鉛直：在翻轉的 Container 內，局部旋轉方向跟著翻轉。

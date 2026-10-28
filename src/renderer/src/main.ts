@@ -64,7 +64,8 @@ function render({ snapshot, effects }: PetOutput): void {
     if (effect.type === "say") {
       bubble.show(effect.line, rig.headTop(), snapshot.facing);
     } else if (effect.type === "playAnimation") {
-      rig.playGreeting();
+      if (effect.animation === "hmph") rig.playHmph();
+      else rig.playGreeting();
     }
   }
 }
