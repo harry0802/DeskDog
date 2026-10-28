@@ -11,6 +11,13 @@ git config --global --add safe.directory /work
 git config --global core.autocrlf true
 git config --global core.filemode false
 
+# Every run is a fresh container, so Claude has never been asked to trust
+# /work and would ignore .claude/settings.json. Pre-accept it.
+claude_config=~/.claude.json
+[ -f "$claude_config" ] || echo '{}' >"$claude_config"
+jq '.projects["/work"].hasTrustDialogAccepted = true' "$claude_config" >"$claude_config.tmp"
+mv "$claude_config.tmp" "$claude_config"
+
 pnpm install --frozen-lockfile --reporter=silent
 
 issues=$(gh issue list --state open --label ready-for-agent --limit 100 \
