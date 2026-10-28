@@ -521,6 +521,72 @@ describe("Neglect", () => {
   });
 });
 
+describe("Make-up", () => {
+  function sulkyPet() {
+    const { pet } = startedPet({}, { now: 0, saved: { affection: 60 } });
+    tick(pet, 46 * MINUTE);
+    clock = 46 * MINUTE;
+    return pet;
+  }
+
+  it("only coaxes on the first Click and stays sulky", () => {
+    const pet = sulkyPet();
+
+    const out = click(pet);
+
+    expect(said(out)).toEqual(["sulkyCoaxing-1"]);
+    expect(out.snapshot.mood).toBe("sulky");
+    expect(tick(pet, clock + 10_000).snapshot.mood).toBe("sulky");
+  });
+
+  it("makes up after 3 Interactions within 30 seconds", () => {
+    const pet = sulkyPet();
+    click(pet);
+    expect(said(click(pet))).toEqual(["sulkyCoaxing-2"]);
+
+    const out = click(pet);
+
+    expect(said(out)).toEqual(["makeUp-1"]);
+    expect(out.snapshot.mood).toBe("normal");
+  });
+
+  it("makes up after a single Pat", () => {
+    const pet = sulkyPet();
+
+    const out = pat(pet);
+
+    expect(said(out)).toEqual(["makeUp-1"]);
+    expect(out.snapshot.mood).toBe("normal");
+  });
+
+  it("does not make up when the 3 Interactions are spread over more than 30 seconds", () => {
+    const pet = sulkyPet();
+    click(pet);
+    clock += 15_000;
+    click(pet);
+    clock += 15_000;
+
+    const out = click(pet);
+
+    expect(said(out)).toHaveLength(1);
+    expect(said(out)[0]).toMatch(/^sulkyCoaxing/);
+    expect(out.snapshot.mood).toBe("sulky");
+  });
+
+  it("stays sulky across a restart until Make-up", () => {
+    const pet = sulkyPet();
+    click(pet);
+    const saved = pet
+      .stop({ now: clock + 1000 })
+      .effects.find((e) => e.type === "save");
+    if (saved?.type !== "save") throw new Error("expected a save");
+
+    const { started } = startedPet({}, { now: clock, saved: saved.petState });
+
+    expect(started.snapshot.mood).toBe("sulky");
+  });
+});
+
 describe("Pickup", () => {
   it("lifts the pet after moving 7 px on the body and says a pickedUp Line", () => {
     const { pet } = startedPet();
@@ -1007,6 +1073,7 @@ describe("Saved state", () => {
           position: started.snapshot.position,
           neglect: 0,
           neglectSinceDecay: 0,
+          sulking: false,
         },
         settings: { name: "小柴", dragPhysics: "standard" },
       },

@@ -43,6 +43,8 @@ export interface SavedPetState {
   readonly neglect: number;
   /** 上次扣 Affection 後累積的 Neglect（ms）。 */
   readonly neglectSinceDecay: number;
+  /** 正在鬧彆扭且尚未 Make-up；Interaction 重置 Neglect 後仍保留。 */
+  readonly sulking: boolean;
 }
 
 export interface Settings {
@@ -173,6 +175,9 @@ const LONELY_NEGLECT = 10 * 60_000;
 const SULKY_NEGLECT = 45 * 60_000;
 /** 低於此值時 normal 改用 coldNormal Line Pool。 */
 const COLD_AFFECTION = 30;
+/** sulky 時在這段時間內累積 MAKE_UP_INTERACTIONS 次 Interaction 就 Make-up（ms）。 */
+const MAKE_UP_WINDOW = 30_000;
+const MAKE_UP_INTERACTIONS = 3;
 /** 按下後移動超過此距離就不再是 Click。 */
 const DRAG_THRESHOLD = 6;
 /** 在頭上按住達此時間即為 Pat；任何部位按住達此時間放開都不是 Click（ms）。 */
@@ -264,6 +269,12 @@ export function createPet(deps: PetDeps): Pet {
   let neglect = 0;
   /** 上次扣 Affection 後累積的 Neglect（ms）。 */
   let neglectSinceDecay = 0;
+  /** 鬧彆扭中，直到 Make-up 才解除。 */
+  let sulking = false;
+  /** sulky 期間最近的 Interaction 時間，用來判斷 Make-up。 */
+  let coaxes: number[] = [];
+  /** 不是當下動作直接產生、要在下次輸出時一併送出的效果。 */
+  let pending: PetEffect[] = [];
   /** 下次輸出時要求存檔。 */
   let saveRequested = false;
   /** 上次存檔時的 Mood；Mood 改變也要存檔。 */
@@ -277,6 +288,10 @@ export function createPet(deps: PetDeps): Pet {
 
   function output(effects: PetEffect[] = []): PetOutput {
     const pet = current();
+    if (pending.length > 0) {
+      effects = [...effects, ...pending];
+      pending = [];
+    }
     if (saveRequested || pet.mood !== savedMood) {
       saveRequested = false;
       savedMood = pet.mood;
@@ -293,6 +308,7 @@ export function createPet(deps: PetDeps): Pet {
       position,
       neglect,
       neglectSinceDecay,
+      sulking,
     };
     return { type: "save", petState, settings };
   }
@@ -308,7 +324,8 @@ export function createPet(deps: PetDeps): Pet {
     const affection = clampAffection(pet.affection + affectionDelta);
     // Afterglow：Pat 之後持續按住的期間，放開即結束。
     const afterglow = press?.patted ?? false;
-    const mood = deriveMood(affection, afterglow, neglect);
+    if (neglect > SULKY_NEGLECT) sulking = true;
+    const mood = deriveMood(affection, afterglow, neglect, sulking);
     if (
       affection !== pet.affection ||
       mood !== pet.mood ||
@@ -320,16 +337,30 @@ export function createPet(deps: PetDeps): Pet {
   }
 
   /** Interaction 重置 Neglect：衰減重新計時，lonely／sulky 隨之結束。 */
-  function interact(now: number): void {
+  function interact(now: number, pat = false): void {
     decay(now);
     neglect = 0;
     neglectSinceDecay = 0;
+    if (sulking) coax(now, pat);
     update();
+  }
+
+  /** sulky 時的 Interaction：Pat 或短時間內夠多次就 Make-up。 */
+  function coax(now: number, pat: boolean): void {
+    coaxes = [...coaxes.filter((t) => now - t <= MAKE_UP_WINDOW), now];
+    if (!pat && coaxes.length < MAKE_UP_INTERACTIONS) return;
+    sulking = false;
+    coaxes = [];
+    saveRequested = true;
+    pending.push(say("makeUp"));
   }
 
   // 只有 Pat 會增加 Affection；Click 只說一句話。
   function click(now: number): PetOutput {
+    const wasSulking = sulking;
     interact(now);
+    // Make-up 的 makeUp Line 已排入 pending。
+    if (wasSulking) return output(sulking ? [say("sulkyCoaxing")] : []);
     return output([say(linePool(current()))]);
   }
 
@@ -491,7 +522,7 @@ export function createPet(deps: PetDeps): Pet {
     const held = now - press.time;
     if (!press.patted && held >= PAT_HOLD) {
       press.patted = true;
-      interact(now);
+      interact(now, true);
       update(PAT_AFFECTION);
       saveRequested = true;
     }
@@ -514,10 +545,12 @@ export function createPet(deps: PetDeps): Pet {
       lastTick = input.now;
       neglect = Math.max(0, numberOr(saved["neglect"], 0));
       neglectSinceDecay = Math.max(0, numberOr(saved["neglectSinceDecay"], 0));
+      sulking = saved["sulking"] === true || neglect > SULKY_NEGLECT;
       snapshot = restSnapshot(
         savedPlace(input.displays, saved) ?? homePlace(input.displays),
         clampAffection(numberOr(saved["affection"], DEFAULT_AFFECTION)),
-        neglect
+        neglect,
+        sulking
       );
       savedMood = current().mood;
       return output([
@@ -605,13 +638,14 @@ function readSettings(saved: unknown): Settings {
   };
 }
 
-// 之後的 issue 會加入 annoyed、sleepy、sulky、lonely。
+// 之後的 issue 會加入 annoyed、sleepy。
 function deriveMood(
   affection: number,
   afterglow: boolean,
-  neglect: number
+  neglect: number,
+  sulking: boolean
 ): Mood {
-  if (neglect > SULKY_NEGLECT) return "sulky";
+  if (sulking) return "sulky";
   if (neglect > LONELY_NEGLECT) return "lonely";
   return afterglow || affection >= HAPPY_AFFECTION ? "happy" : "normal";
 }
@@ -823,10 +857,11 @@ function savedPlace(
 function restSnapshot(
   { display, position }: Place,
   affection: number,
-  neglect: number
+  neglect: number,
+  sulking: boolean
 ): PetSnapshot {
   return {
-    mood: deriveMood(affection, false, neglect),
+    mood: deriveMood(affection, false, neglect, sulking),
     motion: "idle",
     affection,
     afterglow: false,
