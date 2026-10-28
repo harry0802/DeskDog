@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, screen } from "electron";
 import { join } from "node:path";
-import { createPet, type Display } from "../core/pet";
+import { createPet, type Display, type PointerEvent } from "../core/pet";
 import { IPC, type OverlayInit } from "../preload/api";
+import lines from "./lines.json";
 
 // 每個螢幕一個全螢幕透明覆蓋層（ADR-0001）。key 為 webContents id。
 const overlays = new Map<number, Electron.Display>();
@@ -51,13 +52,26 @@ function createOverlay(display: Electron.Display): void {
 }
 
 app.whenReady().then(() => {
-  const pet = createPet({ random: Math.random });
-  const { snapshot } = pet.start({ now: Date.now(), displays: petDisplays() });
+  const pet = createPet({ random: Math.random, lines });
+  const started = pet.start({ now: Date.now(), displays: petDisplays() });
+  let snapshot = started.snapshot;
 
   ipcMain.handle(IPC.init, (event): OverlayInit => {
     const display = overlays.get(event.sender.id);
     if (!display) throw new Error("Unknown overlay");
-    return { displayId: display.id, bounds: display.bounds, snapshot };
+    return {
+      displayId: display.id,
+      bounds: display.bounds,
+      output: { snapshot, effects: started.effects },
+    };
+  });
+
+  ipcMain.on(IPC.pointer, (_event, pointer: PointerEvent) => {
+    const output = pet.pointer(pointer);
+    snapshot = output.snapshot;
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send(IPC.output, output);
+    }
   });
 
   ipcMain.on(IPC.setHit, (event, hit: boolean) => {

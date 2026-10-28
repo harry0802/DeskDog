@@ -1,10 +1,12 @@
 // CSP 不允許 unsafe-eval，改用 Pixi 預先產生的 shader 同步程式。
 import "pixi.js/unsafe-eval";
 import { Application } from "pixi.js";
+import type { PetOutput, PointerEvent } from "../../core/pet";
+import { Bubble } from "./bubble";
 import { createPlaceholderParts } from "./parts";
 import { Rig } from "./rig";
 
-const { displayId, bounds, snapshot } = await window.deskdog.init();
+const { displayId, bounds, output } = await window.deskdog.init();
 
 const app = new Application();
 await app.init({
@@ -18,14 +20,66 @@ app.ticker.maxFPS = 30;
 document.body.appendChild(app.canvas);
 
 const rig = new Rig(createPlaceholderParts(app.renderer), displayId, bounds);
-rig.apply(snapshot);
-app.stage.addChild(rig.view);
+const bubble = new Bubble(bounds);
+app.stage.addChild(rig.view, bubble.view);
+app.ticker.add((ticker) => {
+  rig.update(ticker.deltaMS);
+  bubble.update(ticker.deltaMS);
+});
+
+function render({ snapshot, effects }: PetOutput): void {
+  rig.apply(snapshot);
+  // 只有狗狗所在螢幕的覆蓋層演出效果。
+  if (!rig.view.visible) return;
+  for (const effect of effects) {
+    if (effect.type === "say") {
+      bubble.show(effect.line, rig.headTop(), snapshot.facing);
+    } else {
+      rig.playGreeting();
+    }
+  }
+}
+
+render(output);
+window.deskdog.onOutput(render);
 
 // 視窗穿透時仍會收到 mousemove（forward: true），據此切換是否攔截滑鼠。
+// 按住期間持續攔截，確保收得到放開事件。
 let hit = false;
-window.addEventListener("mousemove", (e) => {
-  const next = rig.hitTest({ x: e.clientX, y: e.clientY });
+let pressed = false;
+
+function setHit(next: boolean): void {
   if (next === hit) return;
   hit = next;
   window.deskdog.setHit(hit);
+}
+
+function sendPointer(type: PointerEvent["type"], e: MouseEvent): void {
+  window.deskdog.pointer({
+    type,
+    time: Date.now(),
+    position: { x: e.clientX + bounds.x, y: e.clientY + bounds.y },
+    hitBody: rig.hitTest({ x: e.clientX, y: e.clientY }),
+  });
+}
+
+window.addEventListener("mousemove", (e) => {
+  if (pressed) {
+    sendPointer("move", e);
+    return;
+  }
+  setHit(rig.hitTest({ x: e.clientX, y: e.clientY }));
+});
+
+window.addEventListener("mousedown", (e) => {
+  if (e.button !== 0) return;
+  pressed = true;
+  sendPointer("down", e);
+});
+
+window.addEventListener("mouseup", (e) => {
+  if (e.button !== 0 || !pressed) return;
+  pressed = false;
+  sendPointer("up", e);
+  setHit(rig.hitTest({ x: e.clientX, y: e.clientY }));
 });

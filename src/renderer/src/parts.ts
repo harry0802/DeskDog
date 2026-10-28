@@ -5,6 +5,8 @@ import type { Point } from "../../core/pet";
 export const CANVAS = { width: 220, height: 170 } as const;
 /** 腳底中心點，畫布座標；對應快照的 position。 */
 export const FEET: Point = { x: 110, y: 170 };
+/** 頭頂（耳尖上方），畫布座標；Bubble 的錨點。 */
+export const HEAD_TOP: Point = { x: 182, y: 10 };
 
 export interface Part {
   readonly name: string;
