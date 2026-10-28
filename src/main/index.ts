@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, screen } from "electron";
+import { app, BrowserWindow, ipcMain, powerMonitor, screen } from "electron";
 import { join } from "node:path";
 import {
   createPet,
@@ -12,6 +12,9 @@ import { readJson, writeJson } from "./store";
 
 /** 核心 tick 間隔（ms）；Pat 判定依賴它。 */
 const TICK_INTERVAL = 100;
+/** 距上次輸入不到這麼久，游標又沒動，就當作使用者正在打字（s）。 */
+const TYPING_IDLE = 2;
+
 /** 狗狗在動（抱起、下落、落地）時加快 tick，讓下落平順（ms）。 */
 const ACTIVE_TICK_INTERVAL = 16;
 
@@ -115,12 +118,30 @@ app.whenReady().then(() => {
     publish(pet.pointer(pointer));
   });
 
+  // 不掛全域鍵盤鉤子：剛有輸入、但游標沒動，視為正在打字。
+  let lastCursor = screen.getCursorScreenPoint();
+  function typing(afkSeconds: number): boolean {
+    const cursor = screen.getCursorScreenPoint();
+    const moved = cursor.x !== lastCursor.x || cursor.y !== lastCursor.y;
+    lastCursor = cursor;
+    return afkSeconds < TYPING_IDLE && !moved;
+  }
+
   function loop(): void {
-    publish(pet.tick({ now: Date.now(), displays: petDisplays() }));
-    setTimeout(
-      loop,
-      snapshot.motion === "idle" ? TICK_INTERVAL : ACTIVE_TICK_INTERVAL
+    const afkSeconds = powerMonitor.getSystemIdleTime();
+    const date = new Date();
+    publish(
+      pet.tick({
+        now: date.getTime(),
+        displays: petDisplays(),
+        afkSeconds,
+        typing: typing(afkSeconds),
+        hour: date.getHours() + date.getMinutes() / 60,
+      })
     );
+    const resting =
+      snapshot.motion === "idle" || snapshot.motion === "sleeping";
+    setTimeout(loop, resting ? TICK_INTERVAL : ACTIVE_TICK_INTERVAL);
   }
   setTimeout(loop, TICK_INTERVAL);
 

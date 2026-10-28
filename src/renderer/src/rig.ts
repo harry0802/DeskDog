@@ -66,11 +66,21 @@ const HMPH_DURATION = 900;
 const HMPH_LOOK_END = 0.35;
 const HMPH_SHAKE = 5;
 
+/** sleepy：趴著睡，慢慢呼吸；被吵醒時揉眼睛，夢中被摸會搖一下尾巴。 */
+const BREATH_PERIOD = 4000;
+const BREATH_DEPTH = 0.02;
+const RUB_DURATION = 900;
+const RUB_SHAKES = 3;
+const RUB_ANGLE = 0.12;
+const DREAM_WAG_DURATION = 700;
+const DREAM_WAG_ANGLE = 0.3;
+
 /** 各 Mood 顯示的表情 Part；未列出的眼睛、嘴巴 Part 隱藏。 */
 const EXPRESSIONS: Partial<Record<Mood, readonly string[]>> = {
   happy: ["eyes_happy", "mouth_happy"],
   annoyed: ["eyes_angry", "mouth_angry"],
   sulky: ["eyes_angry", "mouth_angry"],
+  sleepy: ["eyes_sleep", "mouth_idle"],
 };
 const DEFAULT_EXPRESSION = ["eyes_open", "mouth_idle"];
 const isExpression = (name: string) =>
@@ -123,6 +133,8 @@ export class Rig {
   private motionElapsed = 0;
   private greetingElapsed = GREETING_DURATION;
   private hmphElapsed = HMPH_DURATION;
+  private rubElapsed = RUB_DURATION;
+  private dreamWagElapsed = DREAM_WAG_DURATION;
   private snapshotFacing = -1;
   private lift = 0;
   private stretch = 0;
@@ -182,6 +194,19 @@ export class Rig {
     this.hmphElapsed = 0;
   }
 
+  playRubEyes(): void {
+    this.rubElapsed = 0;
+    this.showExpression();
+  }
+
+  playDreamWag(): void {
+    this.dreamWagElapsed = 0;
+  }
+
+  private get rubbing(): boolean {
+    return this.rubElapsed < RUB_DURATION;
+  }
+
   /** sulky 背對使用者（-1）；hmph 的前段回頭看（1），之後轉開。 */
   private awayFactor(): number {
     if (this.mood !== "sulky") return 1;
@@ -196,6 +221,14 @@ export class Rig {
       this.greetingElapsed + deltaMs
     );
     this.hmphElapsed = Math.min(HMPH_DURATION, this.hmphElapsed + deltaMs);
+    this.dreamWagElapsed = Math.min(
+      DREAM_WAG_DURATION,
+      this.dreamWagElapsed + deltaMs
+    );
+    const wasRubbing = this.rubbing;
+    this.rubElapsed = Math.min(RUB_DURATION, this.rubElapsed + deltaMs);
+    // 揉完眼睛：睜開眼睛。
+    if (wasRubbing && !this.rubbing) this.showExpression();
     this.facing = this.snapshotFacing * this.awayFactor();
     const happy = this.mood === "happy";
     // 跳幀時（例如視窗暫停後）避免彈簧爆衝。
@@ -245,6 +278,14 @@ export class Rig {
     const fling = -forward * FLING_ANGLE * this.stretch;
     const surprised = this.motion === "pickedUp";
     const droop = this.mood === "lonely" ? -DROOPING_EARS : 0;
+    // 揉眼睛：頭左右小幅搖晃。
+    const rub = this.rubbing
+      ? Math.sin((this.rubElapsed / RUB_DURATION) * RUB_SHAKES * Math.PI * 2) *
+        RUB_ANGLE
+      : 0;
+    for (const { part, sprite } of this.parts) {
+      if (isHeadPart(part.name)) sprite.rotation = rub;
+    }
     for (const ear of this.ears) {
       ear.rotation = fling + droop;
       ear.scale.y = surprised ? PERKED_EARS : 1;
@@ -259,7 +300,14 @@ export class Rig {
           ? Math.sin((this.elapsed / LONELY_WAG_PERIOD) * Math.PI * 2) *
             LONELY_WAG_ANGLE
           : 0;
-      this.tail.rotation = wag + fling;
+      // 夢中被摸：搖一下尾巴。
+      const dream =
+        this.dreamWagElapsed < DREAM_WAG_DURATION
+          ? Math.sin(
+              (this.dreamWagElapsed / DREAM_WAG_DURATION) * Math.PI * 4
+            ) * DREAM_WAG_ANGLE
+          : 0;
+      this.tail.rotation = wag + dream + fling;
     }
   }
 
@@ -287,10 +335,18 @@ export class Rig {
         ? (1 - Math.min(1, this.motionElapsed / LANDING_DURATION)) ** 2
         : 0;
     const lifted = 1 + (LIFT_SCALE - 1) * (this.lift / LIFT_HEIGHT);
+    const breath =
+      this.motion === "sleeping"
+        ? 1 +
+          Math.sin((this.elapsed / BREATH_PERIOD) * Math.PI * 2) * BREATH_DEPTH
+        : 1;
     const sx =
       lifted * (1 + STRETCH_X * this.stretch) * (1 + (SQUASH_X - 1) * squash);
     const sy =
-      lifted * (1 - STRETCH_Y * this.stretch) * (1 - (1 - SQUASH_Y) * squash);
+      lifted *
+      breath *
+      (1 - STRETCH_Y * this.stretch) *
+      (1 - (1 - SQUASH_Y) * squash);
     this.view.scale.set(sx * this.facing, sy);
   }
 
@@ -339,7 +395,9 @@ export class Rig {
 
   /** lonely 待機時趴下：換成趴姿身體、收起腿，頭與尾巴放低。 */
   private showPose(): void {
-    const lying = this.mood === "lonely" && this.motion === "idle";
+    const lying =
+      (this.mood === "lonely" && this.motion === "idle") ||
+      this.motion === "sleeping";
     this.lying = lying;
     for (const { part, sprite } of this.parts) {
       if (part.name === "body") sprite.visible = !lying;
@@ -353,8 +411,10 @@ export class Rig {
 
   private showExpression(): void {
     // 剛被抱起時一律是驚訝（睜大的眼睛），不論 Mood。
-    const shown =
-      this.motion === "pickedUp"
+    // 揉眼睛時瞇著眼。
+    const shown = this.rubbing
+      ? ["eyes_sleep", "mouth_idle"]
+      : this.motion === "pickedUp"
         ? DEFAULT_EXPRESSION
         : (EXPRESSIONS[this.mood] ?? DEFAULT_EXPRESSION);
     for (const { part, sprite } of this.parts) {

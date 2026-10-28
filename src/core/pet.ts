@@ -52,6 +52,8 @@ export interface Settings {
   readonly name: string;
   /** 拖拽物理：off 時 Drop 直接回到 Ground，lively 回彈與 Toss 速度上限更高。 */
   readonly dragPhysics: DragPhysics;
+  /** 深夜使用者離開後是否睡覺。 */
+  readonly nightSleep: boolean;
 }
 
 const DRAG_PHYSICS = ["standard", "lively", "off"] as const;
@@ -60,6 +62,12 @@ export type DragPhysics = (typeof DRAG_PHYSICS)[number];
 export interface TickInput {
   readonly now: number;
   readonly displays: readonly Display[];
+  /** 系統 AFK 秒數（使用者沒碰鍵盤滑鼠多久）；沒給視為 0。 */
+  readonly afkSeconds?: number;
+  /** 使用者正在打字；沒給視為沒有。 */
+  readonly typing?: boolean;
+  /** 本地時刻，0 ≤ hour < 24（可含小數，例如 23.5 為 23:30）；沒給視為白天。 */
+  readonly hour?: number;
 }
 
 export type HitRegion = "head" | "body" | "none";
@@ -131,7 +139,7 @@ export type PetEffect =
   | { readonly type: "say"; readonly line: string }
   | {
       readonly type: "playAnimation";
-      readonly animation: "greeting" | "hmph";
+      readonly animation: "greeting" | "hmph" | "rubEyes" | "dreamWag";
     }
   /** 要求主行程把 pet-state 與 settings 寫入存檔。 */
   | {
@@ -167,7 +175,18 @@ export interface StopInput {
 /** 腳底中心點距離工作區域右緣的距離。 */
 const HOME_RIGHT_INSET = 120;
 const DEFAULT_AFFECTION = 50;
-const DEFAULT_SETTINGS: Settings = { name: "小柴", dragPhysics: "standard" };
+const DEFAULT_SETTINGS: Settings = {
+  name: "小柴",
+  dragPhysics: "standard",
+  nightSleep: true,
+};
+/** 深夜時段：NIGHT_START ≤ 時刻 < 24 或 0 ≤ 時刻 < NIGHT_END（時）。 */
+const NIGHT_START = 23;
+const NIGHT_END = 7;
+/** AFK 超過此秒數才入睡（s）。 */
+const SLEEP_AFK = 180;
+/** 被吵醒後保持清醒的時間（ms）。 */
+const WOKEN_DURATION = 2 * 60_000;
 const PAT_AFFECTION = 4;
 const SAFE_DROP_AFFECTION = 1;
 /** Pat 之後繼續撫摸，每隔這麼久再 +1（ms）。 */
@@ -295,6 +314,10 @@ export function createPet(deps: PetDeps): Pet {
   let annoyedUntil: number | undefined;
   /** 最近的 Click 時間，用來判斷連點。 */
   let clickTimes: number[] = [];
+  /** 最近一次 tick 帶來的使用者狀態，推導 sleepy 用。 */
+  let presence = { afkSeconds: 0, typing: false, hour: 12 };
+  /** Woken 清醒期結束的時間；沒在清醒期為 undefined。 */
+  let wokenUntil: number | undefined;
   /** 不是當下動作直接產生、要在下次輸出時一併送出的效果。 */
   let pending: PetEffect[] = [];
   /** 下次輸出時要求存檔。 */
@@ -348,13 +371,31 @@ export function createPet(deps: PetDeps): Pet {
     const afterglow = press?.patted ?? false;
     if (neglect > SULKY_NEGLECT) sulking = true;
     const annoyed = annoyedUntil !== undefined && lastTick < annoyedUntil;
-    const mood = deriveMood(affection, afterglow, neglect, sulking, annoyed);
+    const woken = wokenUntil !== undefined && lastTick < wokenUntil;
+    const settled = pet.motion === "idle" || pet.motion === "sleeping";
+    const sleepy =
+      settled &&
+      !woken &&
+      settings.nightSleep &&
+      isNight(presence.hour) &&
+      presence.afkSeconds > SLEEP_AFK &&
+      !presence.typing;
+    const mood = deriveMood(
+      affection,
+      afterglow,
+      neglect,
+      sulking,
+      annoyed,
+      sleepy
+    );
+    const motion = mood === "sleepy" ? "sleeping" : wakeUp(pet.motion);
     if (
       affection !== pet.affection ||
       mood !== pet.mood ||
-      afterglow !== pet.afterglow
+      afterglow !== pet.afterglow ||
+      motion !== pet.motion
     ) {
-      snapshot = { ...pet, affection, mood, afterglow };
+      snapshot = { ...pet, affection, mood, afterglow, motion };
     }
     return current();
   }
@@ -381,6 +422,7 @@ export function createPet(deps: PetDeps): Pet {
   // 只有 Pat 會增加 Affection；Click 只說一句話。
   function click(now: number): PetOutput {
     const wasSulking = sulking;
+    const wasSleeping = wakeIfSleeping(now);
     interact(now);
     clickTimes = [
       ...clickTimes.filter((t) => now - t <= CLICK_BURST_WINDOW),
@@ -392,6 +434,12 @@ export function createPet(deps: PetDeps): Pet {
       update(BURST_AFFECTION);
       return output([say("annoyed")]);
     }
+    if (wasSleeping) {
+      return output([
+        { type: "playAnimation", animation: "rubEyes" },
+        say("woken"),
+      ]);
+    }
     // Make-up 的 makeUp Line 已排入 pending。
     if (wasSulking)
       return output(
@@ -400,6 +448,13 @@ export function createPet(deps: PetDeps): Pet {
           : []
       );
     return output([say(linePool(current()))]);
+  }
+
+  /** 睡著時被吵醒：之後 WOKEN_DURATION 內不再入睡。回傳原本是否睡著。 */
+  function wakeIfSleeping(now: number): boolean {
+    if (current().mood !== "sleepy") return false;
+    wokenUntil = now + WOKEN_DURATION;
+    return true;
   }
 
   /** 依上次 tick 以來的 Neglect 扣 Affection。 */
@@ -439,6 +494,7 @@ export function createPet(deps: PetDeps): Pet {
 
   /** grab 為按下的位置，at 為目前游標位置。 */
   function pickup(now: number, grab: Point, at: Point): PetOutput {
+    wakeIfSleeping(now);
     interact(now);
     // 在空中或落地時也能再抓起，取消下落與落地演出。
     flight = undefined;
@@ -582,6 +638,10 @@ export function createPet(deps: PetDeps): Pet {
     const held = now - press.time;
     if (!press.patted && held >= PAT_HOLD) {
       press.patted = true;
+      // 睡覺中的 Pat 不吵醒，只在夢中搖一下尾巴。
+      if (current().mood === "sleepy") {
+        pending.push({ type: "playAnimation", animation: "dreamWag" });
+      }
       interact(now, true);
       update(PAT_AFFECTION);
       saveRequested = true;
@@ -621,6 +681,11 @@ export function createPet(deps: PetDeps): Pet {
     tick(input) {
       const { now } = input;
       displays = input.displays;
+      presence = {
+        afkSeconds: input.afkSeconds ?? 0,
+        typing: input.typing ?? false,
+        hour: input.hour ?? 12,
+      };
       decay(now);
       patIfHeld(now);
       return output([...carry(now), ...settle(now)]);
@@ -688,25 +753,39 @@ function numberOr(value: unknown, fallback: number): number {
 }
 
 function readSettings(saved: unknown): Settings {
-  const { name, dragPhysics } = fields(saved);
+  const { name, dragPhysics, nightSleep } = fields(saved);
   return {
     name:
       typeof name === "string" && name !== "" ? name : DEFAULT_SETTINGS.name,
     dragPhysics:
       DRAG_PHYSICS.find((p) => p === dragPhysics) ??
       DEFAULT_SETTINGS.dragPhysics,
+    nightSleep:
+      typeof nightSleep === "boolean"
+        ? nightSleep
+        : DEFAULT_SETTINGS.nightSleep,
   };
 }
 
-// 之後的 issue 會加入 sleepy。
+function isNight(hour: number): boolean {
+  return hour >= NIGHT_START || hour < NIGHT_END;
+}
+
+/** 睡著的 Motion 在不再 sleepy 時回到 idle。 */
+function wakeUp(motion: Motion): Motion {
+  return motion === "sleeping" ? "idle" : motion;
+}
+
 function deriveMood(
   affection: number,
   afterglow: boolean,
   neglect: number,
   sulking: boolean,
-  annoyed: boolean
+  annoyed: boolean,
+  sleepy = false
 ): Mood {
   if (annoyed) return "annoyed";
+  if (sleepy) return "sleepy";
   if (sulking) return "sulky";
   if (neglect > LONELY_NEGLECT) return "lonely";
   return afterglow || affection >= HAPPY_AFFECTION ? "happy" : "normal";

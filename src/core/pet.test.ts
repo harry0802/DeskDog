@@ -1199,7 +1199,7 @@ describe("Saved state", () => {
           neglectSinceDecay: 0,
           sulking: false,
         },
-        settings: { name: "小柴", dragPhysics: "standard" },
+        settings: { name: "小柴", dragPhysics: "standard", nightSleep: true },
       },
     ]);
   });
@@ -1270,3 +1270,147 @@ describe("Saved state", () => {
 
 const saves = (output: PetOutput) =>
   output.effects.filter((e) => e.type === "save");
+
+describe("Sleepy", () => {
+  const NIGHT = 23.5;
+  const asleep = (pet: ReturnType<typeof createPet>, now: number, at = {}) =>
+    pet.tick({
+      now,
+      displays: [primary],
+      hour: NIGHT,
+      afkSeconds: 181,
+      ...at,
+    });
+
+  it("falls asleep at night once the user has been AFK for over 3 minutes", () => {
+    const { pet } = startedPet();
+
+    const out = asleep(pet, 1000);
+
+    expect(out.snapshot.mood).toBe("sleepy");
+    expect(out.snapshot.motion).toBe("sleeping");
+  });
+
+  it.each([
+    { why: "it is daytime", at: { hour: 12 } },
+    { why: "07:00 has come", at: { hour: 7 } },
+    { why: "the AFK is only 3 minutes", at: { afkSeconds: 180 } },
+    { why: "the user is typing", at: { typing: true } },
+  ])("stays awake when $why", ({ at }) => {
+    const { pet } = startedPet();
+
+    const out = asleep(pet, 1000, at);
+
+    expect(out.snapshot.mood).not.toBe("sleepy");
+    expect(out.snapshot.motion).toBe("idle");
+  });
+
+  it("sleeps from 23:00 and stays down until the user returns", () => {
+    const { pet } = startedPet();
+
+    expect(asleep(pet, 1000, { hour: 22.9 }).snapshot.mood).toBe("normal");
+    expect(asleep(pet, 2000, { hour: 23 }).snapshot.mood).toBe("sleepy");
+    expect(asleep(pet, 3000, { hour: 6.9 }).snapshot.mood).toBe("sleepy");
+    const back = asleep(pet, 4000, { afkSeconds: 0 });
+    expect(back.snapshot.mood).toBe("normal");
+    expect(back.snapshot.motion).toBe("idle");
+  });
+
+  it("never sleeps when night sleep is turned off", () => {
+    const { pet } = startedPet({}, { settings: { nightSleep: false } });
+
+    expect(asleep(pet, 1000).snapshot.mood).toBe("normal");
+    expect(pet.configure({ nightSleep: true }).snapshot.mood).toBe("normal");
+    expect(asleep(pet, 2000).snapshot.mood).toBe("sleepy");
+  });
+
+  it("does not fall asleep while being carried", () => {
+    const { pet } = startedPet();
+    const to = { x: BODY.x - 50, y: BODY.y };
+    pet.pointer({ type: "down", time: 500, position: BODY, hit: "body" });
+    pet.pointer({ type: "move", time: 600, position: to, hit: "body" });
+
+    const out = asleep(pet, 700);
+
+    expect(out.snapshot.mood).not.toBe("sleepy");
+    expect(out.snapshot.motion).not.toBe("sleeping");
+  });
+
+  describe("Woken", () => {
+    function sleepingPet() {
+      const { pet } = startedPet({
+        lines: lines({ woken: ["woken"], sleepy: ["zzz"] }),
+      });
+      asleep(pet, 1000);
+      clock = 1000;
+      return pet;
+    }
+
+    it("is woken by a Click: says a woken Line and rubs its eyes", () => {
+      const pet = sleepingPet();
+
+      const out = click(pet);
+
+      expect(out.snapshot.mood).not.toBe("sleepy");
+      expect(out.snapshot.motion).toBe("idle");
+      expect(said(out)).toEqual(["woken"]);
+      expect(out.effects).toContainEqual({
+        type: "playAnimation",
+        animation: "rubEyes",
+      });
+    });
+
+    it("stays awake for 2 minutes, then sleeps again if still AFK", () => {
+      const pet = sleepingPet();
+      click(pet);
+      const wokenAt = clock + 100;
+
+      const awake = asleep(pet, wokenAt + 2 * MINUTE - 1);
+      const later = asleep(pet, wokenAt + 2 * MINUTE + 1);
+
+      expect(awake.snapshot.mood).not.toBe("sleepy");
+      expect(later.snapshot.mood).toBe("sleepy");
+      expect(later.snapshot.motion).toBe("sleeping");
+    });
+
+    it("does not sleep again after the 2 minutes if the user is back", () => {
+      const pet = sleepingPet();
+      click(pet);
+
+      const out = asleep(pet, clock + 3 * MINUTE, { afkSeconds: 5 });
+
+      expect(out.snapshot.mood).not.toBe("sleepy");
+    });
+
+    it("is woken by a Pickup too", () => {
+      const pet = sleepingPet();
+      const to = { x: BODY.x - 50, y: BODY.y };
+      pet.pointer({ type: "down", time: 2000, position: BODY, hit: "body" });
+      const out = pet.pointer({
+        type: "move",
+        time: 2100,
+        position: to,
+        hit: "body",
+      });
+
+      expect(out.snapshot.motion).toBe("pickedUp");
+      expect(out.snapshot.mood).not.toBe("sleepy");
+    });
+
+    it("is not woken by a Pat: Affection still rises and the tail wags in the dream", () => {
+      const pet = sleepingPet();
+      const before = asleep(pet, 1100).snapshot.affection;
+
+      const out = pat(pet);
+
+      expect(out.snapshot.mood).toBe("sleepy");
+      expect(out.snapshot.motion).toBe("sleeping");
+      expect(out.snapshot.affection).toBeGreaterThan(before);
+      expect(out.effects).toContainEqual({
+        type: "playAnimation",
+        animation: "dreamWag",
+      });
+      expect(said(out)).toEqual([]);
+    });
+  });
+});

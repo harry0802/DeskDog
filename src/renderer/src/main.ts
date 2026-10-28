@@ -7,6 +7,7 @@ import { DebugPanel } from "./debug-panel";
 import { Hearts } from "./hearts";
 import { createPlaceholderParts } from "./parts";
 import { Rig } from "./rig";
+import { Zzz } from "./zzz";
 
 const { displayId, bounds, output } = await window.deskdog.init();
 
@@ -31,13 +32,18 @@ const hearts = new Hearts(() => {
   const { x, y } = rig.headTop();
   return { x, y: y + 30 };
 });
-app.stage.addChild(rig.view, hearts.view, bubble.view);
+const zzz = new Zzz(() => {
+  const { x, y } = rig.headTop();
+  return { x, y: y + 10 };
+});
+app.stage.addChild(rig.view, hearts.view, zzz.view, bubble.view);
 // 除錯面板只在開發模式（pnpm dev）建立。
 const debugPanel = import.meta.env.DEV ? new DebugPanel(bounds) : undefined;
 if (debugPanel) app.stage.addChild(debugPanel.view);
 app.ticker.add((ticker) => {
   rig.update(ticker.deltaMS);
   hearts.update(ticker.deltaMS);
+  zzz.update(ticker.deltaMS);
   bubble.update(ticker.deltaMS);
 });
 
@@ -49,12 +55,14 @@ function render({ snapshot, effects }: PetOutput): void {
   // 每個覆蓋層都畫狗狗（超出螢幕的部分自然被裁掉），跨在螢幕邊上時不會斷掉。
   rig.apply(snapshot);
   const here = snapshot.displayId === displayId;
-  app.ticker.maxFPS = snapshot.motion === "idle" ? IDLE_FPS : ACTIVE_FPS;
+  const resting = snapshot.motion === "idle" || snapshot.motion === "sleeping";
+  app.ticker.maxFPS = resting ? IDLE_FPS : ACTIVE_FPS;
   document.body.style.cursor = isCarried(snapshot.motion) ? "grabbing" : "";
   // 拖拽中 Bubble 跟著頭頂走。
   if (bubble.view.visible) bubble.follow(rig.headTop());
   debugPanel?.show(snapshot, rig.footprint(), here);
   hearts.setActive(snapshot.afterglow && here);
+  zzz.setActive(snapshot.motion === "sleeping" && here);
   // 只有狗狗所在螢幕的覆蓋層演出效果；狗狗被抱走時收起這裡的 Bubble。
   if (!here) {
     bubble.hide();
@@ -65,6 +73,8 @@ function render({ snapshot, effects }: PetOutput): void {
       bubble.show(effect.line, rig.headTop(), snapshot.facing);
     } else if (effect.type === "playAnimation") {
       if (effect.animation === "hmph") rig.playHmph();
+      else if (effect.animation === "rubEyes") rig.playRubEyes();
+      else if (effect.animation === "dreamWag") rig.playDreamWag();
       else rig.playGreeting();
     }
   }

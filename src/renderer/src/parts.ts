@@ -110,6 +110,15 @@ const DEFS: readonly PartDef[] = [
         .stroke({ width: 2.5, color: INK, cap: "round" }),
   },
   {
+    name: "eyes_sleep",
+    pivot: { x: 190, y: 62 },
+    draw: (g) =>
+      g
+        .moveTo(184, 62)
+        .quadraticCurveTo(190, 67, 196, 62)
+        .stroke({ width: 2.5, color: INK, cap: "round" }),
+  },
+  {
     name: "mouth_idle",
     pivot: { x: 206, y: 91 },
     draw: (g) =>
