@@ -882,3 +882,135 @@ describe("Across displays", () => {
     expect(rest.position).toEqual({ x: -50, y: 1080 });
   });
 });
+
+describe("Saved state", () => {
+  it.each([
+    { saved: "garbage", settings: 42 },
+    {
+      saved: { affection: "abc" },
+      settings: { name: "", dragPhysics: "wild" },
+    },
+    { saved: null, settings: null },
+  ])(
+    "starts with defaults when the save is corrupt or missing fields ($saved)",
+    ({ saved, settings }) => {
+      const { pet, started } = startedPet(
+        { lines: lines({ greeting: ["{name}"] }) },
+        { saved, settings }
+      );
+
+      expect(started.snapshot.affection).toBe(50);
+      expect(started.snapshot.displayId).toBe(primary.id);
+      expect(said(started)).toEqual(["小柴"]);
+      // 預設拖拽物理為 standard：放開時仍帶速度就 Toss。
+      const dropped = toss(pet, { x: 1500, y: 1000 }, { x: -2400, y: 0 });
+      expect(dropped.snapshot.motion).toBe("falling");
+    }
+  );
+
+  it("returns to the saved position on the saved display", () => {
+    const { started } = startedPet(
+      {},
+      {
+        displays: [primary, secondary],
+        saved: { displayId: secondary.id, position: { x: -700, y: 1080 } },
+      }
+    );
+
+    expect(started.snapshot.displayId).toBe(secondary.id);
+    expect(started.snapshot.position).toEqual({ x: -700, y: 1080 });
+  });
+
+  it("goes home to the bottom-right of the primary display when the saved display is gone", () => {
+    const home = startedPet().started.snapshot.position;
+
+    const { started } = startedPet(
+      {},
+      { saved: { displayId: secondary.id, position: { x: -700, y: 1080 } } }
+    );
+
+    expect(started.snapshot.displayId).toBe(primary.id);
+    expect(started.snapshot.position).toEqual(home);
+  });
+
+  it("asks to save after a Pat", () => {
+    const { pet, started } = startedPet();
+
+    const out = pat(pet);
+
+    expect(saves(out)).toEqual([
+      {
+        type: "save",
+        petState: {
+          affection: started.snapshot.affection + 4,
+          displayId: primary.id,
+          position: started.snapshot.position,
+          neglect: 0,
+        },
+        settings: { name: "小柴", dragPhysics: "standard" },
+      },
+    ]);
+  });
+
+  it("asks to save where the pet lands once the landing is over", () => {
+    const { pet, started } = startedPet();
+    dragAndDrop(pet, { x: BODY.x - 500, y: BODY.y - 600 }, 2000);
+
+    const outputs = [];
+    for (let now = 2016; now <= 4000; now += 16) outputs.push(tick(pet, now));
+    const saved = outputs.flatMap(saves);
+
+    expect(outputs.at(-1)!.snapshot.motion).toBe("idle");
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toMatchObject({
+      petState: {
+        position: { x: started.snapshot.position.x - 500, y: 1392 },
+      },
+    });
+  });
+
+  it("asks to save when the Mood changes", () => {
+    const { pet } = startedPet({}, { now: 0, saved: { affection: 75 } });
+
+    expect(saves(tick(pet, 59 * 60_000))).toEqual([]);
+    const out = tick(pet, 60 * 60_000);
+
+    expect(out.snapshot.mood).toBe("normal");
+    expect(saves(out)).toHaveLength(1);
+    expect(saves(tick(pet, 61 * 60_000))).toEqual([]);
+  });
+
+  it("asks to save the new settings when they change", () => {
+    const { pet } = startedPet();
+
+    const out = pet.configure({ name: "阿福" });
+
+    expect(saves(out)).toHaveLength(1);
+    expect(saves(out)[0]).toMatchObject({
+      settings: { name: "阿福", dragPhysics: "standard" },
+    });
+  });
+
+  it("keeps counting the saved Neglect toward the next Affection Decay", () => {
+    const { pet } = startedPet(
+      {},
+      { now: 0, saved: { affection: 60, neglect: 59 * 60_000 } }
+    );
+
+    expect(tick(pet, 60_000).snapshot.affection).toBe(59);
+  });
+
+  it("asks to save the Neglect so far when the App closes", () => {
+    const { pet } = startedPet({}, { now: 0, saved: { affection: 60 } });
+
+    const out = pet.stop({ now: 30 * 60_000 });
+
+    expect(saves(out)).toHaveLength(1);
+    expect(saves(out)[0]).toMatchObject({
+      petState: { affection: 60, neglect: 30 * 60_000 },
+    });
+  });
+});
+
+const saves = (output: PetOutput) =>
+  output.effects.filter((e) => e.type === "save");

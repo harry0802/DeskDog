@@ -8,6 +8,7 @@ import {
 } from "../core/pet";
 import { IPC, type OverlayInit } from "../preload/api";
 import lines from "./lines.json";
+import { readJson, writeJson } from "./store";
 
 /** 核心 tick 間隔（ms）；Pat 判定依賴它。 */
 const TICK_INTERVAL = 100;
@@ -61,9 +62,32 @@ function createOverlay(display: Electron.Display): void {
   }
 }
 
+/** %APPDATA%/DeskDog 下的存檔。 */
+function saveFile(name: "pet-state" | "settings"): string {
+  return join(app.getPath("appData"), "DeskDog", `${name}.json`);
+}
+
+/** 核心要求存檔時寫入 pet-state 與 settings；寫入失敗不影響狗狗。 */
+function persist({ effects }: PetOutput): void {
+  for (const effect of effects) {
+    if (effect.type !== "save") continue;
+    try {
+      writeJson(saveFile("pet-state"), effect.petState);
+      writeJson(saveFile("settings"), effect.settings);
+    } catch (error) {
+      console.error("Failed to save", error);
+    }
+  }
+}
+
 app.whenReady().then(() => {
   const pet = createPet({ random: Math.random, lines });
-  const started = pet.start({ now: Date.now(), displays: petDisplays() });
+  const started = pet.start({
+    now: Date.now(),
+    displays: petDisplays(),
+    saved: readJson(saveFile("pet-state")),
+    settings: readJson(saveFile("settings")),
+  });
   let snapshot = started.snapshot;
 
   ipcMain.handle(IPC.init, (event): OverlayInit => {
@@ -76,12 +100,14 @@ app.whenReady().then(() => {
     };
   });
 
-  /** 快照有變化或有效果時才通知覆蓋層。 */
+  /** 先處理存檔；快照有變化或有其他效果時才通知覆蓋層。 */
   function publish(output: PetOutput): void {
-    if (output.snapshot === snapshot && output.effects.length === 0) return;
+    persist(output);
+    const effects = output.effects.filter((e) => e.type !== "save");
+    if (output.snapshot === snapshot && effects.length === 0) return;
     snapshot = output.snapshot;
     for (const win of BrowserWindow.getAllWindows()) {
-      win.webContents.send(IPC.output, output);
+      win.webContents.send(IPC.output, { ...output, effects });
     }
   }
 
@@ -103,6 +129,8 @@ app.whenReady().then(() => {
       forward: true,
     });
   });
+
+  app.on("before-quit", () => persist(pet.stop({ now: Date.now() })));
 
   for (const display of screen.getAllDisplays()) createOverlay(display);
 });

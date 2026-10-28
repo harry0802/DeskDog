@@ -27,13 +27,20 @@ export interface Display {
 export interface StartInput {
   readonly now: number;
   readonly displays: readonly Display[];
-  /** 上次存檔；之後的 issue 會補齊欄位與正規化。 */
-  readonly saved?: Partial<SavedPetState>;
-  readonly settings?: Partial<Settings>;
+  /** 上次存檔（pet-state）；可能損壞或缺欄位，壞掉的欄位以預設值取代。 */
+  readonly saved?: unknown;
+  /** 上次存檔（settings）；同上。 */
+  readonly settings?: unknown;
 }
 
+/** pet-state 存檔內容。 */
 export interface SavedPetState {
   readonly affection: number;
+  readonly displayId: DisplayId;
+  /** 腳底中心點；讀檔時放回 Ground。 */
+  readonly position: Point;
+  /** 上次扣 Affection 後累積的 Neglect（ms）。 */
+  readonly neglect: number;
 }
 
 export interface Settings {
@@ -43,7 +50,8 @@ export interface Settings {
   readonly dragPhysics: DragPhysics;
 }
 
-export type DragPhysics = "standard" | "lively" | "off";
+const DRAG_PHYSICS = ["standard", "lively", "off"] as const;
+export type DragPhysics = (typeof DRAG_PHYSICS)[number];
 
 export interface TickInput {
   readonly now: number;
@@ -115,10 +123,15 @@ export interface PetSnapshot {
   readonly facing: "left" | "right";
 }
 
-/** 之後的 issue 會加入要求存檔等效果。 */
 export type PetEffect =
   | { readonly type: "say"; readonly line: string }
-  | { readonly type: "playAnimation"; readonly animation: "greeting" };
+  | { readonly type: "playAnimation"; readonly animation: "greeting" }
+  /** 要求主行程把 pet-state 與 settings 寫入存檔。 */
+  | {
+      readonly type: "save";
+      readonly petState: SavedPetState;
+      readonly settings: Settings;
+    };
 
 export interface PetOutput {
   readonly snapshot: PetSnapshot;
@@ -136,6 +149,12 @@ export interface Pet {
   pointer(event: PointerEvent): PetOutput;
   /** 設定變更；未給的欄位維持原值。 */
   configure(settings: Partial<Settings>): PetOutput;
+  /** App 關閉：要求存檔。 */
+  stop(input: StopInput): PetOutput;
+}
+
+export interface StopInput {
+  readonly now: number;
 }
 
 /** 腳底中心點距離工作區域右緣的距離。 */
@@ -238,6 +257,10 @@ export function createPet(deps: PetDeps): Pet {
   let lastTick = 0;
   /** 上次扣 Affection 後累積的 Neglect（ms）。 */
   let neglectSinceDecay = 0;
+  /** 下次輸出時要求存檔。 */
+  let saveRequested = false;
+  /** 上次存檔時的 Mood；Mood 改變也要存檔。 */
+  let savedMood: Mood = "normal";
   const decks = createLineDecks(deps.lines, deps.random);
 
   function current(): PetSnapshot {
@@ -246,7 +269,24 @@ export function createPet(deps: PetDeps): Pet {
   }
 
   function output(effects: PetEffect[] = []): PetOutput {
-    return { snapshot: current(), effects };
+    const pet = current();
+    if (saveRequested || pet.mood !== savedMood) {
+      saveRequested = false;
+      savedMood = pet.mood;
+      effects = [...effects, save()];
+    }
+    return { snapshot: pet, effects };
+  }
+
+  function save(): PetEffect {
+    const { affection, displayId, position } = current();
+    const petState = {
+      affection,
+      displayId,
+      position,
+      neglect: neglectSinceDecay,
+    };
+    return { type: "save", petState, settings };
   }
 
   function say(pool: LinePool): PetEffect {
@@ -425,6 +465,8 @@ export function createPet(deps: PetDeps): Pet {
     ) {
       landedAt = undefined;
       setMotion("idle");
+      // 停在 Ground 上了：存下位置。
+      saveRequested = true;
       return [say("landing")];
     }
     return [];
@@ -439,6 +481,7 @@ export function createPet(deps: PetDeps): Pet {
       press.patted = true;
       interact(now);
       update(PAT_AFFECTION);
+      saveRequested = true;
     }
     if (press.patted) {
       const strokes = Math.floor((held - PAT_HOLD) / STROKE_INTERVAL);
@@ -453,13 +496,16 @@ export function createPet(deps: PetDeps): Pet {
 
   return {
     start(input) {
-      settings = { ...DEFAULT_SETTINGS, ...input.settings };
+      settings = readSettings(input.settings);
+      const saved = fields(input.saved);
       displays = input.displays;
       lastTick = input.now;
-      snapshot = homeSnapshot(
-        primaryDisplay(input.displays),
-        clampAffection(input.saved?.affection ?? DEFAULT_AFFECTION)
+      neglectSinceDecay = Math.max(0, numberOr(saved["neglect"], 0));
+      snapshot = restSnapshot(
+        savedPlace(input.displays, saved) ?? homePlace(input.displays),
+        clampAffection(numberOr(saved["affection"], DEFAULT_AFFECTION))
       );
+      savedMood = current().mood;
       return output([
         { type: "playAnimation", animation: "greeting" },
         say("greeting"),
@@ -472,8 +518,14 @@ export function createPet(deps: PetDeps): Pet {
       patIfHeld(now);
       return output([...carry(now), ...settle(now)]);
     },
+    stop({ now }) {
+      decay(now);
+      saveRequested = true;
+      return output();
+    },
     configure(change) {
       settings = { ...settings, ...change };
+      saveRequested = true;
       return output();
     },
     pointer(event) {
@@ -514,6 +566,28 @@ export function createPet(deps: PetDeps): Pet {
       }
       return output();
     },
+  };
+}
+
+/** 存檔的欄位；不是物件時視為沒有任何欄位。 */
+function fields(saved: unknown): Readonly<Record<string, unknown>> {
+  return typeof saved === "object" && saved !== null
+    ? (saved as Record<string, unknown>)
+    : {};
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readSettings(saved: unknown): Settings {
+  const { name, dragPhysics } = fields(saved);
+  return {
+    name:
+      typeof name === "string" && name !== "" ? name : DEFAULT_SETTINGS.name,
+    dragPhysics:
+      DRAG_PHYSICS.find((p) => p === dragPhysics) ??
+      DEFAULT_SETTINGS.dragPhysics,
   };
 }
 
@@ -575,10 +649,7 @@ function feetArea(display: Display, displays: readonly Display[]): FeetArea {
 }
 
 /** 離 feet 最近、狗狗可以待的位置，以及它所在的螢幕。 */
-function nearestPlace(
-  displays: readonly Display[],
-  feet: Point
-): { display: Display; position: Point } {
+function nearestPlace(displays: readonly Display[], feet: Point): Place {
   const places = displays.map((display) => {
     const area = feetArea(display, displays);
     const position = {
@@ -695,18 +766,51 @@ function ground(workArea: Rect): number {
   return workArea.y + workArea.height;
 }
 
-function homeSnapshot(display: Display, affection: number): PetSnapshot {
+interface Place {
+  readonly display: Display;
+  readonly position: Point;
+}
+
+/** 主螢幕右下角的 Ground。 */
+function homePlace(displays: readonly Display[]): Place {
+  const display = primaryDisplay(displays);
   const { workArea } = display;
+  return {
+    display,
+    position: {
+      x: workArea.x + workArea.width - HOME_RIGHT_INSET,
+      y: ground(workArea),
+    },
+  };
+}
+
+/** 上次所在螢幕的 Ground；螢幕已不存在或位置損壞時為 undefined。 */
+function savedPlace(
+  displays: readonly Display[],
+  saved: Readonly<Record<string, unknown>>
+): Place | undefined {
+  const display = displays.find((d) => d.id === saved["displayId"]);
+  const x = numberOr(fields(saved["position"])["x"], NaN);
+  if (!display || Number.isNaN(x)) return undefined;
+  // 螢幕解析度可能變了：夾回工作區域內。
+  const area = feetArea(display, displays);
+  return {
+    display,
+    position: { x: clamp(x, area.left, area.right), y: area.bottom },
+  };
+}
+
+function restSnapshot(
+  { display, position }: Place,
+  affection: number
+): PetSnapshot {
   return {
     mood: deriveMood(affection, false),
     motion: "idle",
     affection,
     afterglow: false,
     displayId: display.id,
-    position: {
-      x: workArea.x + workArea.width - HOME_RIGHT_INSET,
-      y: ground(workArea),
-    },
+    position,
     velocity: STILL,
     facing: "left",
   };
