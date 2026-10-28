@@ -275,6 +275,12 @@ const DECAY_TIERS = [
   { above: 80, interval: 3 * 60_000 },
 ] as const;
 const DECAY_INTERVAL = 60 * 60_000;
+/** Stroll：每隔 STROLL_INTERVAL 判定一次，成功機率 STROLL_CHANCE，走 STROLL_DISTANCE 的距離。 */
+const STROLL_INTERVAL = { min: 60_000, max: 3 * 60_000 } as const;
+const STROLL_CHANCE = 0.3;
+const STROLL_DISTANCE = { min: 50, max: 200 } as const;
+/** 散步速度（px/s）。 */
+const STROLL_SPEED = 60;
 const STILL: Point = { x: 0, y: 0 };
 
 export function createPet(deps: PetDeps): Pet {
@@ -338,6 +344,10 @@ export function createPet(deps: PetDeps): Pet {
   let wokenUntil: number | undefined;
   /** 下一次 Chatter 的時間；關閉時為 undefined。 */
   let nextChatter: number | undefined;
+  /** 下一次 Stroll 判定的時間。 */
+  let nextStroll = 0;
+  /** 散步中：目標 x 與已走到的時間。 */
+  let stroll: { targetX: number; time: number } | undefined;
   /** 不是當下動作直接產生、要在下次輸出時一併送出的效果。 */
   let pending: PetEffect[] = [];
   /** 下次輸出時要求存檔。 */
@@ -401,6 +411,73 @@ export function createPet(deps: PetDeps): Pet {
     }
     scheduleChatter(now);
     return [say(linePool(pet))];
+  }
+
+  function scheduleStroll(from: number): void {
+    const { min, max } = STROLL_INTERVAL;
+    nextStroll = from + min + deps.random() * (max - min);
+  }
+
+  /** 閒置且心情允許時才散步：sleepy、lonely、sulky 與拖拽中不散步。 */
+  function canStroll(): boolean {
+    const { mood, motion } = current();
+    return (
+      !drag &&
+      !press &&
+      (motion === "idle" || motion === "strolling") &&
+      mood !== "sleepy" &&
+      mood !== "lonely" &&
+      mood !== "sulky"
+    );
+  }
+
+  /** 推進散步，並在到時間時判定要不要開始新的一段。 */
+  function walk(now: number): void {
+    if (stroll && !canStroll()) {
+      stroll = undefined;
+      setMotion("idle");
+    }
+    if (stroll) {
+      const pet = current();
+      const reach = (STROLL_SPEED * (now - stroll.time)) / 1000;
+      const left = stroll.targetX - pet.position.x;
+      stroll.time = now;
+      if (Math.abs(left) <= reach) {
+        snapshot = { ...pet, position: { ...pet.position, x: stroll.targetX } };
+        stroll = undefined;
+        setMotion("idle");
+      } else {
+        const x = pet.position.x + Math.sign(left) * reach;
+        snapshot = { ...pet, position: { ...pet.position, x } };
+      }
+    }
+    if (now < nextStroll) return;
+    scheduleStroll(now);
+    if (!stroll && canStroll() && deps.random() < STROLL_CHANCE) {
+      beginStroll(now);
+    }
+  }
+
+  function beginStroll(now: number): void {
+    const pet = current();
+    const area = feetArea(displayOf(displays, pet.displayId), displays);
+    const { min, max } = STROLL_DISTANCE;
+    const length = min + deps.random() * (max - min);
+    let direction = deps.random() < 0.5 ? -1 : 1;
+    // 走出螢幕就改往另一邊；兩邊都放不下時只走到邊緣。
+    const fits = (d: number) => {
+      const x = pet.position.x + d * length;
+      return x >= area.left && x <= area.right;
+    };
+    if (!fits(direction) && fits(-direction)) direction = -direction;
+    const targetX = clamp(
+      pet.position.x + direction * length,
+      area.left,
+      area.right
+    );
+    stroll = { targetX, time: now };
+    snapshot = { ...pet, facing: direction < 0 ? "left" : "right" };
+    setMotion("strolling");
   }
 
   function say(pool: LinePool): PetEffect {
@@ -544,6 +621,7 @@ export function createPet(deps: PetDeps): Pet {
     // 在空中或落地時也能再抓起，取消下落與落地演出。
     flight = undefined;
     landedAt = undefined;
+    stroll = undefined;
     const { position } = current();
     drag = {
       since: now,
@@ -709,6 +787,8 @@ export function createPet(deps: PetDeps): Pet {
       displays = input.displays;
       lastTick = input.now;
       scheduleChatter(input.now);
+      scheduleStroll(input.now);
+      stroll = undefined;
       neglect = Math.max(0, numberOr(saved["neglect"], 0));
       neglectSinceDecay = Math.max(0, numberOr(saved["neglectSinceDecay"], 0));
       sulking = saved["sulking"] === true || neglect > SULKY_NEGLECT;
@@ -735,6 +815,7 @@ export function createPet(deps: PetDeps): Pet {
       decay(now);
       patIfHeld(now);
       const effects = [...carry(now), ...settle(now)];
+      walk(now);
       if (effects.some((e) => e.type === "say")) return output(effects);
       return output([...effects, ...chatter(now)]);
     },

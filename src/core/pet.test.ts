@@ -1572,3 +1572,155 @@ describe("Chatter", () => {
     expect(times).toEqual([]);
   });
 });
+
+describe("Stroll", () => {
+  const MIN = 60_000;
+  const HOME_X = 2440;
+  /**
+   * start 與 Line 抽選用掉的亂數一律為 0（Stroll 1 分鐘後第一次判定）；
+   * 之後每次判定依序消耗 rolls：下次判定的時間、機率、距離、方向。
+   */
+  let rolls: number[] = [];
+  const random = () => rolls.shift() ?? 0;
+  const tick = (pet: ReturnType<typeof createPet>, now: number) =>
+    pet.tick({ now, displays: [primary] });
+  const stroller = (input: Partial<StartInput> = {}) => {
+    rolls = [];
+    return startedPet({ random }, input).pet;
+  };
+  const MID = 0.5;
+
+  it("walks 50–200px to the left, facing the way it goes, when the roll succeeds", () => {
+    const pet = stroller();
+    rolls = [0, 0.1, MID, 0.1];
+
+    const begun = tick(pet, MIN);
+    const midway = tick(pet, MIN + 1000);
+    const arrived = tick(pet, MIN + 5000);
+
+    expect(begun.snapshot.motion).toBe("strolling");
+    expect(begun.snapshot.facing).toBe("left");
+    expect(midway.snapshot.position.x).toBeLessThan(HOME_X);
+    expect(midway.snapshot.position.x).toBeGreaterThan(HOME_X - 125);
+    expect(arrived.snapshot.motion).toBe("idle");
+    expect(arrived.snapshot.position).toEqual({ x: HOME_X - 125, y: 1392 });
+  });
+
+  it("does not walk when the roll fails", () => {
+    const pet = stroller();
+    rolls = [0, 0.3, MID, 0.1];
+
+    const out = tick(pet, MIN);
+
+    expect(out.snapshot.motion).toBe("idle");
+    expect(out.snapshot.position.x).toBe(HOME_X);
+  });
+
+  it("rolls again 1–3 minutes after a failed roll", () => {
+    const pet = stroller();
+    rolls = [0, 0.9, 0, 0.1, MID, 0.1];
+
+    tick(pet, MIN);
+    const early = tick(pet, MIN + 30_000);
+    const second = tick(pet, 2 * MIN);
+
+    expect(early.snapshot.motion).toBe("idle");
+    expect(second.snapshot.motion).toBe("strolling");
+  });
+
+  it.each([
+    { roll: 0, length: 50 },
+    { roll: 0.999, length: 200 },
+  ])("walks $length px when the distance roll is $roll", ({ roll, length }) => {
+    const pet = stroller();
+    rolls = [0, 0.1, roll, 0.1];
+
+    tick(pet, MIN);
+    const arrived = tick(pet, MIN + 10_000);
+
+    expect(HOME_X - arrived.snapshot.position.x).toBeCloseTo(length, 0);
+  });
+
+  it("walks the other way instead of leaving the screen", () => {
+    // 往右 125px 會超出右緣（2450），所以改往左。
+    const pet = stroller();
+    rolls = [0, 0.1, MID, 0.9];
+
+    const begun = tick(pet, MIN);
+    const arrived = tick(pet, MIN + 10_000);
+
+    expect(begun.snapshot.facing).toBe("left");
+    expect(arrived.snapshot.position.x).toBe(HOME_X - 125);
+  });
+
+  it("faces right when walking right", () => {
+    const pet = stroller({
+      saved: { displayId: 1, position: { x: 1000, y: 1392 } },
+    });
+    rolls = [0, 0.1, MID, 0.9];
+
+    const begun = tick(pet, MIN);
+    const arrived = tick(pet, MIN + 10_000);
+
+    expect(begun.snapshot.facing).toBe("right");
+    expect(arrived.snapshot.position.x).toBe(1125);
+  });
+
+  it("does not walk while sleepy", () => {
+    const pet = stroller();
+    rolls = [0, 0.1, MID, 0.1];
+
+    const out = pet.tick({
+      now: MIN,
+      displays: [primary],
+      hour: 23.5,
+      afkSeconds: 181,
+    });
+
+    expect(out.snapshot.motion).toBe("sleeping");
+  });
+
+  it.each([
+    { why: "lonely", neglect: 11 * MIN },
+    { why: "sulky", neglect: 46 * MIN },
+  ])("does not walk while $why", ({ neglect }) => {
+    const pet = stroller({ saved: { neglect } });
+    rolls = [0, 0.1, MID, 0.1];
+
+    const out = tick(pet, MIN);
+
+    expect(out.snapshot.motion).toBe("idle");
+  });
+
+  it("does not walk while being dragged", () => {
+    const pet = stroller();
+    rolls = [0, 0.1, MID, 0.1];
+    pet.pointer({ type: "down", time: MIN - 500, position: BODY, hit: "body" });
+    pet.pointer({
+      type: "move",
+      time: MIN - 400,
+      position: { x: BODY.x - 100, y: BODY.y },
+      hit: "body",
+    });
+
+    const out = tick(pet, MIN);
+
+    expect(out.snapshot.motion).toBe("dragging");
+  });
+
+  it("stops walking when picked up", () => {
+    const pet = stroller();
+    rolls = [0, 0.1, MID, 0.1];
+    tick(pet, MIN);
+    pet.pointer({ type: "down", time: MIN + 500, position: BODY, hit: "body" });
+
+    const out = pet.pointer({
+      type: "move",
+      time: MIN + 600,
+      position: { x: BODY.x - 100, y: BODY.y },
+      hit: "body",
+    });
+
+    expect(out.snapshot.motion).toBe("pickedUp");
+  });
+});
