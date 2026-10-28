@@ -104,6 +104,16 @@ export class Rig {
     }
   }
 
+  /** 狗狗畫布範圍（不含跳躍），覆蓋層視窗座標。 */
+  footprint(): Rect {
+    return {
+      x: this.base.x - FEET.x,
+      y: this.base.y - FEET.y,
+      width: CANVAS.width,
+      height: CANVAS.height,
+    };
+  }
+
   /** 頭頂位置（不含跳躍），覆蓋層視窗座標；Bubble 的錨點。 */
   headTop(): Point {
     const sign = this.view.scale.x;

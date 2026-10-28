@@ -278,6 +278,22 @@ describe("Afterglow", () => {
 
     expect(released.snapshot.mood).toBe("normal");
   });
+
+  it("exposes whether the pet is in Afterglow", () => {
+    const { pet, started } = startedPet();
+    expect(started.snapshot.afterglow).toBe(false);
+
+    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
+    expect(tick(pet, 2000).snapshot.afterglow).toBe(true);
+
+    const released = pet.pointer({
+      type: "up",
+      time: 2500,
+      position: BODY,
+      hitBody: true,
+    });
+    expect(released.snapshot.afterglow).toBe(false);
+  });
 });
 
 describe("Mood from Affection", () => {

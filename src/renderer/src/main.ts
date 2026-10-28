@@ -3,6 +3,7 @@ import "pixi.js/unsafe-eval";
 import { Application } from "pixi.js";
 import type { PetOutput, PointerEvent } from "../../core/pet";
 import { Bubble } from "./bubble";
+import { DebugPanel } from "./debug-panel";
 import { createPlaceholderParts } from "./parts";
 import { Rig } from "./rig";
 
@@ -22,6 +23,9 @@ document.body.appendChild(app.canvas);
 const rig = new Rig(createPlaceholderParts(app.renderer), displayId, bounds);
 const bubble = new Bubble(bounds);
 app.stage.addChild(rig.view, bubble.view);
+// 除錯面板只在開發模式（pnpm dev）建立。
+const debugPanel = import.meta.env.DEV ? new DebugPanel(bounds) : undefined;
+if (debugPanel) app.stage.addChild(debugPanel.view);
 app.ticker.add((ticker) => {
   rig.update(ticker.deltaMS);
   bubble.update(ticker.deltaMS);
@@ -29,6 +33,7 @@ app.ticker.add((ticker) => {
 
 function render({ snapshot, effects }: PetOutput): void {
   rig.apply(snapshot);
+  debugPanel?.show(snapshot, rig.footprint(), rig.view.visible);
   // 只有狗狗所在螢幕的覆蓋層演出效果。
   if (!rig.view.visible) return;
   for (const effect of effects) {

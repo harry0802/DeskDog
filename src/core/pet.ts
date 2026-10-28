@@ -87,6 +87,8 @@ export interface PetSnapshot {
   readonly mood: Mood;
   /** 0–100。 */
   readonly affection: number;
+  /** Pat 後仍持續摸著（Afterglow 中）。 */
+  readonly afterglow: boolean;
   readonly displayId: DisplayId;
   /** 狗狗腳底中心點，螢幕座標；靜止時 y 等於 Ground。 */
   readonly position: Point;
@@ -156,9 +158,14 @@ export function createPet(deps: PetDeps): Pet {
     const pet = current();
     const affection = clampAffection(pet.affection + affectionDelta);
     // Afterglow：Pat 之後持續按住的期間，放開即結束。
-    const mood = deriveMood(affection, press?.patted ?? false);
-    if (affection !== pet.affection || mood !== pet.mood) {
-      snapshot = { ...pet, affection, mood };
+    const afterglow = press?.patted ?? false;
+    const mood = deriveMood(affection, afterglow);
+    if (
+      affection !== pet.affection ||
+      mood !== pet.mood ||
+      afterglow !== pet.afterglow
+    ) {
+      snapshot = { ...pet, affection, mood, afterglow };
     }
     return current();
   }
@@ -249,6 +256,7 @@ function homeSnapshot(display: Display, affection: number): PetSnapshot {
   return {
     mood: deriveMood(affection, false),
     affection,
+    afterglow: false,
     displayId: display.id,
     position: {
       x: workArea.x + workArea.width - HOME_RIGHT_INSET,
