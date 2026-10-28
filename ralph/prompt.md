@@ -35,7 +35,7 @@ Never make them pass by deleting or skipping tests, `any`, `@ts-ignore`, or loos
 
 # COMMIT
 
-Make one git commit. Do not push. The message must:
+Make one git commit. Do not push. Stage only the files you changed for this issue — never `git add -A` or `git add .`; the working tree may hold the human's unrelated edits. The message must:
 
 - Start with `RALPH: ` followed by an imperative summary
 - Reference the issue (`#<number>`)
