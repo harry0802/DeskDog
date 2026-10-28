@@ -7,6 +7,12 @@ export const CANVAS = { width: 220, height: 170 } as const;
 export const FEET: Point = { x: 110, y: 170 };
 /** 頭頂（耳尖上方），畫布座標；Bubble 的錨點。 */
 export const HEAD_TOP: Point = { x: 182, y: 10 };
+/** 屬於頭部的 Part：按住這些部位可以撫摸，其餘部位之後用來拖曳。 */
+export const isHeadPart = (name: string) =>
+  name === "head" ||
+  name.startsWith("ear_") ||
+  name.startsWith("eyes_") ||
+  name.startsWith("mouth_");
 
 export interface Part {
   readonly name: string;

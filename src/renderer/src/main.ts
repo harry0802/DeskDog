@@ -72,7 +72,7 @@ function sendPointer(type: PointerEvent["type"], e: MouseEvent): void {
     type,
     time: Date.now(),
     position: { x: e.clientX + bounds.x, y: e.clientY + bounds.y },
-    hitBody: rig.hitTest({ x: e.clientX, y: e.clientY }),
+    hit: rig.hitTest({ x: e.clientX, y: e.clientY }),
   });
 }
 
@@ -81,7 +81,7 @@ window.addEventListener("mousemove", (e) => {
     sendPointer("move", e);
     return;
   }
-  setHit(rig.hitTest({ x: e.clientX, y: e.clientY }));
+  setHit(rig.hitTest({ x: e.clientX, y: e.clientY }) !== "none");
 });
 
 window.addEventListener("mousedown", (e) => {
@@ -94,5 +94,5 @@ window.addEventListener("mouseup", (e) => {
   if (e.button !== 0 || !pressed) return;
   pressed = false;
   sendPointer("up", e);
-  setHit(rig.hitTest({ x: e.clientX, y: e.clientY }));
+  setHit(rig.hitTest({ x: e.clientX, y: e.clientY }) !== "none");
 });

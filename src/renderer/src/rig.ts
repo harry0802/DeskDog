@@ -1,7 +1,14 @@
 // Rig：把核心快照映射成 Part 的變換（ADR-0002），並做逐像素命中。
 import { Container, Sprite } from "pixi.js";
-import type { DisplayId, Mood, PetSnapshot, Point, Rect } from "../../core/pet";
-import { CANVAS, FEET, HEAD_TOP, type Part } from "./parts";
+import type {
+  DisplayId,
+  HitRegion,
+  Mood,
+  PetSnapshot,
+  Point,
+  Rect,
+} from "../../core/pet";
+import { CANVAS, FEET, HEAD_TOP, isHeadPart, type Part } from "./parts";
 
 /** Part alpha 超過 10% 才算命中。 */
 const HIT_ALPHA = 255 * 0.1;
@@ -123,12 +130,13 @@ export class Rig {
     };
   }
 
-  /** point 為覆蓋層視窗座標。 */
-  hitTest(point: Point): boolean {
-    if (!this.view.visible) return false;
+  /** 游標命中的部位；point 為覆蓋層視窗座標。 */
+  hitTest(point: Point): HitRegion {
+    if (!this.view.visible) return "none";
     // 游標遠離時直接判定未命中。
-    if (!this.view.getBounds().containsPoint(point.x, point.y)) return false;
-    return this.parts.some(({ part, sprite }) => {
+    if (!this.view.getBounds().containsPoint(point.x, point.y)) return "none";
+    // 由前往後找第一個命中的 Part，例如耳朵疊在身體前面時算頭部。
+    const hit = [...this.parts].reverse().find(({ part, sprite }) => {
       if (!sprite.visible) return false;
       const local = sprite.toLocal(point);
       if (
@@ -144,6 +152,8 @@ export class Rig {
       const py = Math.floor((local.y / CANVAS.height) * height);
       return (data[(py * width + px) * 4 + 3] ?? 0) > HIT_ALPHA;
     });
+    if (!hit) return "none";
+    return isHeadPart(hit.part.name) ? "head" : "body";
   }
 
   private showExpression(): void {

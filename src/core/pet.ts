@@ -46,12 +46,15 @@ export interface TickInput {
   readonly displays: readonly Display[];
 }
 
+export type HitRegion = "head" | "body" | "none";
+
 export interface PointerEvent {
   readonly type: "down" | "move" | "up";
   readonly time: number;
   /** 螢幕座標。 */
   readonly position: Point;
-  readonly hitBody: boolean;
+  /** 游標命中狗狗的哪個部位；none 表示沒命中。 */
+  readonly hit: HitRegion;
 }
 
 export type Mood =
@@ -121,12 +124,14 @@ const HOME_RIGHT_INSET = 120;
 const DEFAULT_AFFECTION = 50;
 const DEFAULT_SETTINGS: Settings = { name: "小柴" };
 const PAT_AFFECTION = 4;
+/** Pat 之後繼續撫摸，每隔這麼久再 +1（ms）。 */
+const STROKE_INTERVAL = 1000;
 const HAPPY_AFFECTION = 75;
 /** 低於此值時 normal 改用 coldNormal Line Pool。 */
 const COLD_AFFECTION = 30;
 /** 按下後移動超過此距離就不再是 Click。 */
 const DRAG_THRESHOLD = 6;
-/** 按住不動達此時間即為 Pat，放開也不再是 Click（ms）。 */
+/** 在頭上按住達此時間即為 Pat；任何部位按住達此時間放開都不是 Click（ms）。 */
 const PAT_HOLD = 1000;
 /**
  * Affection Decay：Affection 高於 above 時，每累積 interval 的 Neglect 扣 1（ms）。
@@ -143,7 +148,16 @@ export function createPet(deps: PetDeps): Pet {
   let snapshot: PetSnapshot | undefined;
   /** 在身上按下的位置與時間；未按在身上時為 undefined。 */
   let press:
-    | { position: Point; time: number; dragged: boolean; patted: boolean }
+    | {
+        position: Point;
+        time: number;
+        /** 按在頭上：可以 Pat。 */
+        onHead: boolean;
+        dragged: boolean;
+        patted: boolean;
+        /** Pat 之後繼續撫摸已加過的 Affection。 */
+        strokes: number;
+      }
     | undefined;
   let settings = DEFAULT_SETTINGS;
   let lastTick = 0;
@@ -213,11 +227,21 @@ export function createPet(deps: PetDeps): Pet {
 
   /** 按住不動達 PAT_HOLD 時觸發一次 Pat；回傳這次按住是否已 Pat。 */
   function patIfHeld(now: number): boolean {
-    if (!press || press.dragged) return false;
-    if (!press.patted && now - press.time >= PAT_HOLD) {
+    // 在頭上移動是在撫摸，不會取消 Pat；拖曳只從頭部以外判斷。
+    if (!press?.onHead) return false;
+    const held = now - press.time;
+    if (!press.patted && held >= PAT_HOLD) {
       press.patted = true;
       interact(now);
       update(PAT_AFFECTION);
+    }
+    if (press.patted) {
+      const strokes = Math.floor((held - PAT_HOLD) / STROKE_INTERVAL);
+      if (strokes > press.strokes) {
+        interact(now);
+        update(strokes - press.strokes);
+        press.strokes = strokes;
+      }
     }
     return press.patted;
   }
@@ -242,14 +266,17 @@ export function createPet(deps: PetDeps): Pet {
     },
     pointer(event) {
       if (event.type === "down") {
-        press = event.hitBody
-          ? {
-              position: event.position,
-              time: event.time,
-              dragged: false,
-              patted: false,
-            }
-          : undefined;
+        press =
+          event.hit !== "none"
+            ? {
+                position: event.position,
+                time: event.time,
+                onHead: event.hit === "head",
+                dragged: false,
+                patted: false,
+                strokes: 0,
+              }
+            : undefined;
         return output();
       }
       if (!press) return output();
@@ -258,9 +285,10 @@ export function createPet(deps: PetDeps): Pet {
       }
       if (event.type === "up") {
         const patted = patIfHeld(event.time);
-        const { dragged } = press;
+        const { dragged, time } = press;
         press = undefined;
-        if (!dragged && !patted) return click(event.time);
+        const quick = event.time - time < PAT_HOLD;
+        if (!dragged && !patted && quick) return click(event.time);
         update();
       }
       return output();

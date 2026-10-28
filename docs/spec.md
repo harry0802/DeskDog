@@ -56,9 +56,9 @@ DeskDog 是一隻常駐 Windows 桌面的側面視角狗狗。牠站在螢幕工
 
 28. As a 使用者, I want 在狗狗身上按下並在 1 秒內放開（未移動超過拖拽門檻）算 Click, so that 輕點有明確回應。
 29. As a 使用者, I want Click 依目前 Mood 說一句 Line（不改變 Affection，只有 Pat 會增加）, so that 每次點牠都有回饋。
-30. As a 使用者, I want 在狗狗身上按住不動達 1 秒算 Pat, so that 我能好好摸摸牠。
-31. As a 使用者, I want Pat 讓 Affection +4 並進入 Afterglow（持續摸著時 Mood 為 happy 並冒出愛心，放開即結束）, so that 摸頭比點一下更有感。
-32. As a 使用者, I want 按住後移動超過拖拽門檻（約 6px）就 Pickup, so that 我想搬牠時不會被誤判成摸頭或點擊。
+30. As a 使用者, I want 在狗狗頭部按住達 1 秒算 Pat（按著時在頭上來回移動仍算）, so that 我能好好摸摸牠。
+31. As a 使用者, I want Pat 讓 Affection +4、之後每多摸 1 秒再 +1，並進入 Afterglow（持續摸著時 Mood 為 happy 並冒出愛心，放開即結束）, so that 摸頭比點一下更有感。
+32. As a 使用者, I want 在頭部以外的身體按住後移動超過拖拽門檻（約 6px）就 Pickup, so that 我想搬牠時不會被誤判成摸頭或點擊。
 33. As a 使用者, I want Pickup 時游標變成抓取狀態, so that 我知道我正抓著牠。
 34. As a 使用者, I want 1.5 秒內連續 Click 5 次時 Affection -1 並進入 annoyed（10 秒冷卻）, so that 狗狗有被打擾的真實反應。
 35. As a 使用者, I want annoyed 冷卻結束後自動恢復, so that 牠不會一直記仇。
@@ -190,9 +190,9 @@ type Motion =
 | 項目                    | 值                                                                   |
 | ----------------------- | -------------------------------------------------------------------- |
 | 拖拽門檻                | 約 6px 移動                                                          |
-| Pat                     | 按住不動 1 秒                                                        |
+| Pat                     | 在頭部按住 1 秒（頭上移動不取消）                                    |
 | 連點判定                | 1.5 秒內 5 次 Click → Affection -1、annoyed 10 秒                    |
-| Click / Pat / 安全 Drop | 0 / +4 / +1                                                          |
+| Click / Pat / 安全 Drop | 0 / +4（之後每多摸 1 秒 +1） / +1                                    |
 | Afterglow               | 持續到放開滑鼠                                                       |
 | Affection Decay         | Neglect 每 N 分鐘 -1：>95 為 1、>90 為 2、>80 為 3；≤80 每 1 小時 -1 |
 | Make-up                 | 30 秒內 3 次 Interaction 或 1 次 Pat                                 |

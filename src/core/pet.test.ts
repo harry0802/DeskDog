@@ -74,12 +74,12 @@ describe("Click", () => {
   it("says a Line from the current Mood's pool without changing Affection", () => {
     const { pet, started } = startedPet();
 
-    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
     const out = pet.pointer({
       type: "up",
       time: 1100,
       position: BODY,
-      hitBody: true,
+      hit: "body",
     });
 
     expect(out.snapshot.affection).toBe(started.snapshot.affection);
@@ -96,13 +96,13 @@ describe("Click", () => {
       const { pet, started } = startedPet();
       const to = { x: BODY.x + moved, y: BODY.y };
 
-      pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
-      pet.pointer({ type: "move", time: 1050, position: to, hitBody: true });
+      pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
+      pet.pointer({ type: "move", time: 1050, position: to, hit: "body" });
       const out = pet.pointer({
         type: "up",
         time: 1100,
         position: to,
-        hitBody: true,
+        hit: "body",
       });
 
       expect(said(out)).toHaveLength(isClick ? 1 : 0);
@@ -116,12 +116,12 @@ describe("Click", () => {
   ])("releasing after $held ms: Click = $isClick", ({ held, isClick }) => {
     const { pet } = startedPet();
 
-    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
     const out = pet.pointer({
       type: "up",
       time: 1000 + held,
       position: BODY,
-      hitBody: true,
+      hit: "body",
     });
 
     expect(said(out)).toHaveLength(isClick ? 1 : 0);
@@ -144,12 +144,12 @@ describe("Click", () => {
   it("ignores presses that start off the body", () => {
     const { pet, started } = startedPet();
 
-    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: false });
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "none" });
     const out = pet.pointer({
       type: "up",
       time: 1100,
       position: BODY,
-      hitBody: true,
+      hit: "body",
     });
 
     expect(said(out)).toHaveLength(0);
@@ -170,23 +170,23 @@ let clock = 0;
 /** 按住 1.1 秒後放開：一次 Pat。 */
 function pat(pet: ReturnType<typeof createPet>): PetOutput {
   clock += 5_000;
-  pet.pointer({ type: "down", time: clock, position: BODY, hitBody: true });
+  pet.pointer({ type: "down", time: clock, position: BODY, hit: "head" });
   return pet.pointer({
     type: "up",
     time: clock + 1_100,
     position: BODY,
-    hitBody: true,
+    hit: "head",
   });
 }
 
 function click(pet: ReturnType<typeof createPet>): PetOutput {
   clock += 5_000;
-  pet.pointer({ type: "down", time: clock, position: BODY, hitBody: true });
+  pet.pointer({ type: "down", time: clock, position: BODY, hit: "body" });
   return pet.pointer({
     type: "up",
     time: clock + 100,
     position: BODY,
-    hitBody: true,
+    hit: "body",
   });
 }
 
@@ -232,11 +232,54 @@ const tick = (pet: ReturnType<typeof createPet>, now: number) =>
   pet.tick({ now, displays: [primary] });
 
 describe("Pat", () => {
+  it("keeps adding 1 Affection per extra second of petting", () => {
+    const { pet, started } = startedPet();
+    const before = started.snapshot.affection;
+
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "head" });
+
+    expect(tick(pet, 2000).snapshot.affection).toBe(before + 4);
+    expect(tick(pet, 2999).snapshot.affection).toBe(before + 4);
+    expect(tick(pet, 3000).snapshot.affection).toBe(before + 5);
+    expect(tick(pet, 5000).snapshot.affection).toBe(before + 7);
+    const out = pet.pointer({
+      type: "up",
+      time: 5500,
+      position: BODY,
+      hit: "head",
+    });
+    expect(out.snapshot.affection).toBe(before + 7);
+    expect(tick(pet, 8000).snapshot.affection).toBe(before + 7);
+  });
+
+  it("keeps counting as a Pat while stroking the head back and forth", () => {
+    const { pet, started } = startedPet();
+    const left = { x: BODY.x - 20, y: BODY.y };
+
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "head" });
+    pet.pointer({ type: "move", time: 1300, position: left, hit: "head" });
+    pet.pointer({ type: "move", time: 1600, position: BODY, hit: "head" });
+
+    expect(tick(pet, 2000).snapshot.affection).toBe(
+      started.snapshot.affection + 4
+    );
+  });
+
+  it("only happens on the head: holding the body is not a Pat", () => {
+    const { pet, started } = startedPet();
+
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "body" });
+    const out = tick(pet, 3000);
+
+    expect(out.snapshot.affection).toBe(started.snapshot.affection);
+    expect(out.snapshot.afterglow).toBe(false);
+  });
+
   it("is not a Pat after 0.9 s of holding, but is at 1.0 s and adds 4 Affection", () => {
     const { pet, started } = startedPet();
     const before = started.snapshot.affection;
 
-    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "head" });
 
     expect(tick(pet, 1900).snapshot.affection).toBe(before);
     expect(tick(pet, 2000).snapshot.affection).toBe(before + 4);
@@ -245,28 +288,30 @@ describe("Pat", () => {
   it("counts a 1 s hold released before any tick as a Pat, not a Click", () => {
     const { pet, started } = startedPet();
 
-    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "head" });
     const out = pet.pointer({
       type: "up",
       time: 2200,
       position: BODY,
-      hitBody: true,
+      hit: "head",
     });
 
     expect(out.snapshot.affection).toBe(started.snapshot.affection + 4);
   });
 
-  it("only Pats once per hold", () => {
+  it("gives the +4 Pat bonus only once per hold", () => {
     const { pet, started } = startedPet();
 
-    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
+    // 都在 Pat 後的第一秒內，不含撫摸的 +1。
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "head" });
     tick(pet, 2000);
-    tick(pet, 3000);
+    tick(pet, 2500);
+    tick(pet, 2900);
     const out = pet.pointer({
       type: "up",
-      time: 3500,
+      time: 2950,
       position: BODY,
-      hitBody: true,
+      hit: "head",
     });
 
     expect(out.snapshot.affection).toBe(started.snapshot.affection + 4);
@@ -276,7 +321,7 @@ describe("Pat", () => {
 describe("Afterglow", () => {
   it("keeps the Mood happy while still being patted, and ends on release", () => {
     const { pet } = startedPet();
-    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "head" });
     // 第 2000 ms 觸發 Pat（Affection 54，本身仍是 normal）。
     expect(tick(pet, 2000).snapshot.mood).toBe("happy");
     expect(tick(pet, 5000).snapshot.mood).toBe("happy");
@@ -285,7 +330,7 @@ describe("Afterglow", () => {
       type: "up",
       time: 5500,
       position: BODY,
-      hitBody: true,
+      hit: "head",
     });
 
     expect(released.snapshot.mood).toBe("normal");
@@ -295,14 +340,14 @@ describe("Afterglow", () => {
     const { pet, started } = startedPet();
     expect(started.snapshot.afterglow).toBe(false);
 
-    pet.pointer({ type: "down", time: 1000, position: BODY, hitBody: true });
+    pet.pointer({ type: "down", time: 1000, position: BODY, hit: "head" });
     expect(tick(pet, 2000).snapshot.afterglow).toBe(true);
 
     const released = pet.pointer({
       type: "up",
       time: 2500,
       position: BODY,
-      hitBody: true,
+      hit: "head",
     });
     expect(released.snapshot.afterglow).toBe(false);
   });
@@ -396,8 +441,8 @@ describe("Affection Decay", () => {
     tick(pet, 59 * MINUTE);
 
     const at = 59 * MINUTE;
-    pet.pointer({ type: "down", time: at, position: BODY, hitBody: true });
-    pet.pointer({ type: "up", time: at + 100, position: BODY, hitBody: true });
+    pet.pointer({ type: "down", time: at, position: BODY, hit: "body" });
+    pet.pointer({ type: "up", time: at + 100, position: BODY, hit: "body" });
 
     expect(tick(pet, 61 * MINUTE).snapshot.affection).toBe(60);
     expect(tick(pet, at + 100 + 60 * MINUTE).snapshot.affection).toBe(59);
