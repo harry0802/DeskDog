@@ -35,6 +35,8 @@ function startedPet(
 ) {
   const pet = createPet({ random: () => 0.5, lines: lines(), ...deps });
   const started = pet.start({ now: 0, displays: [primary], ...input });
+  // click()／pat() 從啟動時間往後推，避免跨測試累積的時間觸發 Affection Decay。
+  clock = input.now ?? 0;
   return { pet, started };
 }
 
@@ -164,7 +166,7 @@ function seeded(seed: number): () => number {
   };
 }
 
-let clock = 10_000;
+let clock = 0;
 /** 按住 1.1 秒後放開：一次 Pat。 */
 function pat(pet: ReturnType<typeof createPet>): PetOutput {
   clock += 5_000;
@@ -364,21 +366,29 @@ describe("Affection Decay", () => {
     expect(tick(pet, 60 * MINUTE).snapshot.affection).toBe(59);
   });
 
-  it("drops from 100 to 80 at 1 per 3 minutes, then slows to 1 per hour", () => {
+  it("decays fastest near 100 and slows down tier by tier", () => {
     const { pet } = startedPet({}, { now: 0, saved: { affection: 100 } });
 
-    expect(tick(pet, 3 * MINUTE - 1).snapshot.affection).toBe(100);
-    expect(tick(pet, 3 * MINUTE).snapshot.affection).toBe(99);
-    expect(tick(pet, 60 * MINUTE).snapshot.affection).toBe(80);
-    expect(tick(pet, 120 * MINUTE - 1).snapshot.affection).toBe(80);
-    expect(tick(pet, 120 * MINUTE).snapshot.affection).toBe(79);
+    // 100 → 95：每 1 分鐘 -1，共 5 分鐘。
+    expect(tick(pet, 1 * MINUTE - 1).snapshot.affection).toBe(100);
+    expect(tick(pet, 1 * MINUTE).snapshot.affection).toBe(99);
+    expect(tick(pet, 5 * MINUTE).snapshot.affection).toBe(95);
+    // 95 → 90：每 2 分鐘 -1，共 10 分鐘。
+    expect(tick(pet, 7 * MINUTE - 1).snapshot.affection).toBe(95);
+    expect(tick(pet, 15 * MINUTE).snapshot.affection).toBe(90);
+    // 90 → 80：每 3 分鐘 -1，共 30 分鐘。
+    expect(tick(pet, 18 * MINUTE - 1).snapshot.affection).toBe(90);
+    expect(tick(pet, 45 * MINUTE).snapshot.affection).toBe(80);
+    // 80 以下：每 1 小時 -1。
+    expect(tick(pet, 105 * MINUTE - 1).snapshot.affection).toBe(80);
+    expect(tick(pet, 105 * MINUTE).snapshot.affection).toBe(79);
   });
 
   it("applies both rates correctly within a single long tick", () => {
     const { pet } = startedPet({}, { now: 0, saved: { affection: 100 } });
 
-    // 前 60 分鐘 100 → 80，再 60 分鐘 80 → 79。
-    expect(tick(pet, 120 * MINUTE).snapshot.affection).toBe(79);
+    // 5 + 10 + 30 分鐘 100 → 80，再 60 分鐘 80 → 79。
+    expect(tick(pet, 105 * MINUTE).snapshot.affection).toBe(79);
   });
 
   it("restarts the Neglect count after a Click", () => {

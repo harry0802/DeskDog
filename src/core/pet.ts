@@ -128,11 +128,16 @@ const COLD_AFFECTION = 30;
 const DRAG_THRESHOLD = 6;
 /** 按住不動達此時間即為 Pat，放開也不再是 Click（ms）。 */
 const PAT_HOLD = 1000;
-/** Affection Decay：每累積這麼久的 Neglect 扣 1（ms）。 */
+/**
+ * Affection Decay：Affection 高於 above 時，每累積 interval 的 Neglect 扣 1（ms）。
+ * 越接近 100 掉得越快，避免狗狗長時間停在開心；由高到低排列。
+ */
+const DECAY_TIERS = [
+  { above: 95, interval: 1 * 60_000 },
+  { above: 90, interval: 2 * 60_000 },
+  { above: 80, interval: 3 * 60_000 },
+] as const;
 const DECAY_INTERVAL = 60 * 60_000;
-/** 高於此值時衰減較快，避免狗狗長時間停在開心。 */
-const FAST_DECAY_ABOVE = 80;
-const FAST_DECAY_INTERVAL = 3 * 60_000;
 
 export function createPet(deps: PetDeps): Pet {
   let snapshot: PetSnapshot | undefined;
@@ -194,10 +199,7 @@ export function createPet(deps: PetDeps): Pet {
     let remaining = now - lastTick;
     lastTick = now;
     while (remaining > 0 && current().affection > 0) {
-      const interval =
-        current().affection > FAST_DECAY_ABOVE
-          ? FAST_DECAY_INTERVAL
-          : DECAY_INTERVAL;
+      const interval = decayInterval(current().affection);
       const untilDecay = interval - neglectSinceDecay;
       if (remaining < untilDecay) {
         neglectSinceDecay += remaining;
@@ -269,6 +271,13 @@ export function createPet(deps: PetDeps): Pet {
 // 之後的 issue 會加入 annoyed、sleepy、sulky、lonely。
 function deriveMood(affection: number, afterglow: boolean): Mood {
   return afterglow || affection >= HAPPY_AFFECTION ? "happy" : "normal";
+}
+
+function decayInterval(affection: number): number {
+  return (
+    DECAY_TIERS.find(({ above }) => affection > above)?.interval ??
+    DECAY_INTERVAL
+  );
 }
 
 function clampAffection(affection: number): number {
