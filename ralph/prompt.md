@@ -51,4 +51,4 @@ Make one git commit. Do not push. Stage only the files you changed for this issu
 # FINAL RULES
 
 ONLY WORK ON A SINGLE ISSUE.
-When every issue below is done or blocked, output <promise>COMPLETE</promise>.
+When every issue below is done or blocked, output <promise>COMPLETE</promise> alone on its own line. Never write that tag anywhere else, not even to say you are not outputting it.

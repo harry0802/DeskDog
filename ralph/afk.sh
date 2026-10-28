@@ -15,7 +15,9 @@ for ((i = 1; i <= $1; i++)); do
   echo "=== Ralph iteration $i/$1 ==="
   result=$(run_sandbox afk | tee /dev/stderr)
 
-  if [[ "$result" == *"<promise>COMPLETE</promise>"* ]]; then
+  # Whole-line match only: the agent sometimes mentions the tag in prose
+  # ("I haven't output <promise>COMPLETE</promise>").
+  if grep -qxE '[[:space:]]*<promise>COMPLETE</promise>[[:space:]]*' <<<"$result"; then
     echo "=== Backlog done after $i iteration(s) ==="
     exit 0
   fi

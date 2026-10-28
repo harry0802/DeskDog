@@ -19,7 +19,8 @@ issues=$(gh issue list --state open --label ready-for-agent --limit 100 \
 
 # Nothing to do: skip the model call entirely.
 if [ "$issues" = "[]" ]; then
-  echo "No open ready-for-agent issues. <promise>COMPLETE</promise>"
+  echo "No open ready-for-agent issues."
+  echo "<promise>COMPLETE</promise>"
   exit 0
 fi
 
