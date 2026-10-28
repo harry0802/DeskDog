@@ -13,7 +13,10 @@ source "$(dirname "$0")/lib.sh"
 
 for ((i = 1; i <= $1; i++)); do
   echo "=== Ralph iteration $i/$1 ==="
-  result=$(run_sandbox afk | tee /dev/stderr)
+  # claude -p prints only when the iteration ends, so there is nothing to
+  # stream. (tee /dev/stderr reopens the log under Git Bash and garbles it.)
+  result=$(run_sandbox afk)
+  echo "$result"
 
   # Whole-line match only: the agent sometimes mentions the tag in prose
   # ("I haven't output <promise>COMPLETE</promise>").
