@@ -28,19 +28,20 @@ afk.sh（主機，Git Bash）
 
 ## 檔案
 
-| 檔案           | 作用                                                                                                                                 | 你會改它嗎                                            |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
-| `once.sh`      | 只跑一輪，**互動模式**：你看得到 Claude 在做什麼，它要執行指令時會先問你                                                             | 不會                                                  |
-| `afk.sh`       | 跑 N 輪，**無人值守**：不會問你，跑完再回來看結果                                                                                    | 不會                                                  |
-| `prompt.md`    | Ralph 專屬的規則：怎麼挑 issue、`RALPH:` commit 前綴、怎麼回報 issue。實際怎麼寫程式和跑測試，交給 `.claude/skills/do-work/SKILL.md` | **會：挑 issue 的規則改這裡；寫程式的流程改 do-work** |
-| `inside.sh`    | 容器裡每一輪的步驟（安裝套件、抓 issue、組 prompt、呼叫 claude）                                                                     | 很少                                                  |
-| `lib.sh`       | 怎麼啟動容器（掛載 repo、帶入 token 和 git 身分）                                                                                    | 很少                                                  |
-| `.env.example` | `.env` 的範本                                                                                                                        | 不會                                                  |
-| `.env`         | 你的 token（已 gitignore，不會進 git）                                                                                               | 填一次                                                |
+| 檔案                                  | 作用                                                                                                                                 | 你會改它嗎                                            |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| `once.ps1`、`afk.ps1`、`git-bash.ps1` | PowerShell 的入口：找到 Git Bash，再執行對應的 `.sh`                                                                                 | 不會                                                  |
+| `once.sh`                             | 只跑一輪，**互動模式**：你看得到 Claude 在做什麼，它要執行指令時會先問你                                                             | 不會                                                  |
+| `afk.sh`                              | 跑 N 輪，**無人值守**：不會問你，跑完再回來看結果                                                                                    | 不會                                                  |
+| `prompt.md`                           | Ralph 專屬的規則：怎麼挑 issue、`RALPH:` commit 前綴、怎麼回報 issue。實際怎麼寫程式和跑測試，交給 `.claude/skills/do-work/SKILL.md` | **會：挑 issue 的規則改這裡；寫程式的流程改 do-work** |
+| `inside.sh`                           | 容器裡每一輪的步驟（安裝套件、抓 issue、組 prompt、呼叫 claude）                                                                     | 很少                                                  |
+| `lib.sh`                              | 怎麼啟動容器（掛載 repo、帶入 token 和 git 身分）                                                                                    | 很少                                                  |
+| `.env.example`                        | `.env` 的範本                                                                                                                        | 不會                                                  |
+| `.env`                                | 你的 token（已 gitignore，不會進 git）                                                                                               | 填一次                                                |
 
 ## 第一次設定
 
-1. **Podman 要先啟動**（每次重開機後都要）：`podman machine start`
+1. **Podman 要先啟動**（每次重開機後都要）：`podman machine start`。podman 不在 PATH 上的話，用完整路徑：`& "C:\Program Files\RedHat\Podman\podman.exe" machine start`
 2. **容器映像檔**：Ralph 用的是 Sandcastle 建好的 `sandcastle:deskdog`。如果不見了，執行：
    `pnpm exec sandcastle podman build-image --image-name sandcastle:deskdog`
 3. **Token**：`cp ralph/.env.example ralph/.env`，然後填入：
@@ -49,13 +50,27 @@ afk.sh（主機，Git Bash）
 
 ## 使用
 
-在 **Git Bash** 的 repo 根目錄執行：
+在 repo 根目錄執行。先開一個分支，因為 Ralph 會直接 commit 到目前分支：
 
 ```bash
-git switch -c ralph/<這批工作的名字>   # 建議：Ralph 會直接 commit 到目前分支
-bash ralph/once.sh                     # 第一次或改過 prompt 後：跑一輪看看
-bash ralph/afk.sh 5                    # 放心後：最多跑 5 輪
+git switch -c ralph/<這批工作的名字>
 ```
+
+**PowerShell**（`.ps1` 會自己找到 Git Bash 來跑）：
+
+```powershell
+.\ralph\once.ps1      # 第一次或改過 prompt 後：跑一輪看看
+.\ralph\afk.ps1 5     # 放心後：最多跑 5 輪
+```
+
+**Git Bash**：
+
+```bash
+bash ralph/once.sh
+bash ralph/afk.sh 5
+```
+
+> 在 PowerShell 裡**不要**打 `bash ralph/afk.sh`：那個 `bash` 可能是 WSL 的，不是 Git Bash，會找不到 podman。也不要直接打 `ralph/afk.sh`，PowerShell 不會執行 `.sh` 檔。
 
 跑完後：
 
@@ -83,6 +98,8 @@ bash ralph/afk.sh 5                    # 放心後：最多跑 5 輪
 
 | 狀況                                                                  | 原因／解法                                                |
 | --------------------------------------------------------------------- | --------------------------------------------------------- |
+| `Ralph needs Git Bash, but this is another bash (likely WSL)`         | 在 PowerShell 打了 `bash ...`，改用 `.\ralph\afk.ps1`     |
+| `wsl: Failed to start the systemd user session`                       | 同上：PowerShell 的 `bash` 叫到了 WSL                     |
 | `Missing ralph/.env`                                                  | 還沒建 `.env`，見「第一次設定」                           |
 | `Missing image sandcastle:deskdog`                                    | 映像檔不見了，見「第一次設定」第 2 步                     |
 | 連不上 Podman                                                         | 先跑 `podman machine start`                               |

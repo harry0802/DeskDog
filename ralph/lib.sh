@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Shared by once.sh and afk.sh: start the Podman sandbox for one iteration.
 
+if ! command -v cygpath >/dev/null; then
+  echo "Ralph needs Git Bash, but this is another bash (likely WSL)." >&2
+  echo "From PowerShell run: .\\ralph\\afk.ps1 <iterations>  or  .\\ralph\\once.ps1" >&2
+  exit 1
+fi
+
 # Stop Git Bash from rewriting container paths like /work into C:\...
 export MSYS_NO_PATHCONV=1
 
