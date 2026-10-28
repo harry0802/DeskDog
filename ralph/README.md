@@ -15,8 +15,9 @@ afk.sh（主機，Git Bash）
             → 一個都沒有就直接結束，不呼叫 Claude
          3. 抓最近 10 個 RALPH: commit
          4. prompt.md + 上面兩份資料 → 交給 claude
-             └─ Claude：挑一個 issue → 讀程式 → 寫測試和實作
-                → pnpm run type-check / test → commit → 關閉 issue 或留言
+             └─ Claude：挑一個 issue → 照 do-work skill 做完它
+                （規劃 → Red Green Refactor → type-check / test → commit → QA 步驟）
+                → 關閉 issue（附 QA 步驟）或留言
  └─ 輸出單獨一行 <promise>COMPLETE</promise> → 提早停止；否則跑下一輪
 ```
 
@@ -27,15 +28,15 @@ afk.sh（主機，Git Bash）
 
 ## 檔案
 
-| 檔案           | 作用                                                                              | 你會改它嗎                 |
-| -------------- | --------------------------------------------------------------------------------- | -------------------------- |
-| `once.sh`      | 只跑一輪，**互動模式**：你看得到 Claude 在做什麼，它要執行指令時會先問你          | 不會                       |
-| `afk.sh`       | 跑 N 輪，**無人值守**：不會問你，跑完再回來看結果                                 | 不會                       |
-| `prompt.md`    | 給 Claude 的工作規則：任務優先順序、怎麼寫、怎麼檢查、commit 格式、怎麼回報 issue | **會，這是主要調整的地方** |
-| `inside.sh`    | 容器裡每一輪的步驟（安裝套件、抓 issue、組 prompt、呼叫 claude）                  | 很少                       |
-| `lib.sh`       | 怎麼啟動容器（掛載 repo、帶入 token 和 git 身分）                                 | 很少                       |
-| `.env.example` | `.env` 的範本                                                                     | 不會                       |
-| `.env`         | 你的 token（已 gitignore，不會進 git）                                            | 填一次                     |
+| 檔案           | 作用                                                                                                                                 | 你會改它嗎                                            |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| `once.sh`      | 只跑一輪，**互動模式**：你看得到 Claude 在做什麼，它要執行指令時會先問你                                                             | 不會                                                  |
+| `afk.sh`       | 跑 N 輪，**無人值守**：不會問你，跑完再回來看結果                                                                                    | 不會                                                  |
+| `prompt.md`    | Ralph 專屬的規則：怎麼挑 issue、`RALPH:` commit 前綴、怎麼回報 issue。實際怎麼寫程式和跑測試，交給 `.claude/skills/do-work/SKILL.md` | **會：挑 issue 的規則改這裡；寫程式的流程改 do-work** |
+| `inside.sh`    | 容器裡每一輪的步驟（安裝套件、抓 issue、組 prompt、呼叫 claude）                                                                     | 很少                                                  |
+| `lib.sh`       | 怎麼啟動容器（掛載 repo、帶入 token 和 git 身分）                                                                                    | 很少                                                  |
+| `.env.example` | `.env` 的範本                                                                                                                        | 不會                                                  |
+| `.env`         | 你的 token（已 gitignore，不會進 git）                                                                                               | 填一次                                                |
 
 ## 第一次設定
 
@@ -67,7 +68,8 @@ bash ralph/afk.sh 5                    # 放心後：最多跑 5 輪
 - **要它做的 issue**：標上 `ready-for-agent`。沒標的 issue 它完全看不到。
 - **不要它碰的 issue**：拿掉標籤，或改標 `ready-for-human`。
 - **大型 issue（多階段計畫）**：它一輪只做一個階段，做完就留言，下一輪再接著做。
-- **改優先順序或規則**：編輯 `prompt.md` 的 `TASK SELECTION` 段。
+- **改優先順序**：編輯 `prompt.md` 的 `TASK SELECTION` 段。
+- **改寫程式、跑測試、commit 的方式**：編輯 `.claude/skills/do-work/SKILL.md`。你平常打 `/do-work` 和 Ralph 用的是同一份，改一次兩邊都生效。容器掛載的是你的工作目錄，所以**還沒 commit 的修改也會被 Ralph 讀到**。
 
 ## 安全設計
 

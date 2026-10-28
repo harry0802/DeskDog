@@ -15,38 +15,22 @@ Pick the highest-priority issue that is not blocked by another open issue:
 
 If an issue is a multi-phase plan, do only the next unfinished phase (check its comments for what is done).
 
-# EXPLORATION
+# DO THE WORK
 
-Read the issue and its comments. Read `CLAUDE.md`, `GLOSSARY.md` and any relevant `docs/adr/` entries, then the source files and tests you will touch.
+Read `.claude/skills/do-work/SKILL.md` and follow it from step 1 to step 5 for the issue you picked. The issue and its comments are your plan. That file is how work gets done in this repo — plan, Red Green Refactor, feedback loops, commit, QA hand-off — so do not substitute your own process.
 
-# IMPLEMENTATION
+Ralph adds only these on top:
 
-Keep the change as small as the task allows and match the surrounding code.
-For logic, work test-first: one failing test, make it pass, repeat, refactor once at the end. Bug fixes start with a test that reproduces the bug.
-
-# FEEDBACK LOOPS
-
-Before committing, run both and fix every failure:
-
-- `pnpm run type-check`
-- `pnpm run test`
-
-Never make them pass by deleting or skipping tests, `any`, `@ts-ignore`, or loosening config.
-
-# COMMIT
-
-Make one git commit. Do not push. Stage only the files you changed for this issue — never `git add -A` or `git add .`; the working tree may hold the human's unrelated edits. The message must:
-
-- Start with `RALPH: ` followed by an imperative summary
-- Reference the issue (`#<number>`)
-- List key decisions made
-- List files changed
-- Note blockers or hints for the next iteration
+- **Commit subject** starts with `RALPH: `. Besides what do-work asks for in the body, list the files changed and add a `Next:` line for the following iteration (what is left, what to watch out for).
+- **Never `git add -A` or `git add .`** — the working tree may hold the human's unrelated edits. Do not push.
+- **Stuck**: if the same loop failure survives 3 fix attempts, stop, do not commit broken code, and report it on the issue as below.
 
 # THE ISSUE
 
-- Task complete → `gh issue close <number> --comment "<what was done>"`
-- Task not complete, or blocked → `gh issue comment <number> --body "<what was done, what is left, what blocks it>"` and leave it open
+Nobody is watching this run, so the issue is where you report, including do-work's step 5 QA hand-off.
+
+- Everything the issue asks for is committed → `gh issue close <number> --comment "<what was done, the commit sha, and the manual QA steps from do-work step 5>"`
+- Partly done, or stuck → `gh issue comment <number> --body "<what was done, what is left, what blocks it>"` and leave it open
 
 # FINAL RULES
 
